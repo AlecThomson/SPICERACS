@@ -696,6 +696,8 @@ def main(
         outfile (str, optional): Output file name. Defaults to None.
         cat_format (str, optional): Type of catalogue .e.g. fits. Defaults to None.
     """
+    # Fields to check the unit of
+    check_list = ["polint", "polint_err", "stokesQ", "stokesU", "stokesI"]
     # default connection (ie, local)
     beams_col, island_col, comp_col = get_db(
         host=host, username=username, password=password
@@ -749,6 +751,7 @@ def main(
         ),
     ):
         data = []
+
         if src == "cat":
             for comp in comps:
                 data += [comp[col]]
@@ -757,6 +760,8 @@ def main(
 
         if src == "synth":
             for comp in comps:
+                if name in check_list:
+                    unit = u.Unit(comp["rmsynth_summary"]["units"])
                 try:
                     data += [comp["rmclean_summary"][col]]
                 except KeyError:

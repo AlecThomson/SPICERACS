@@ -99,6 +99,7 @@ def rmsynthoncut3d(
     header, dataU = do_RMsynth_3D.readFitsCube(ufile, rm_verbose)
     header, dataI = do_RMsynth_3D.readFitsCube(ifile, rm_verbose)
 
+
     dataQ = np.squeeze(dataQ)
     dataU = np.squeeze(dataU)
     dataI = np.squeeze(dataI)
@@ -274,6 +275,7 @@ def rmsynthoncut1d(
     tt1: Union[str, None] = None,
     ion: bool = False,
     do_own_fit: bool = False,
+    n_pix_pad: int = 0,
 ) -> pymongo.UpdateOne:
     """1D RM synthesis
 
@@ -309,6 +311,7 @@ def rmsynthoncut1d(
     header, dataQ = do_RMsynth_3D.readFitsCube(qfile, rm_verbose)
     header, dataU = do_RMsynth_3D.readFitsCube(ufile, rm_verbose)
     header, dataI = do_RMsynth_3D.readFitsCube(ifile, rm_verbose)
+    cube = SpectralCube.read(ifile) # type: SpectralCube
 
     dataQ = np.squeeze(dataQ)
     dataU = np.squeeze(dataU)
@@ -345,9 +348,28 @@ def rmsynthoncut1d(
 
     x, y = np.array(wcs.celestial.world_to_pixel(coord)).round().astype(int)
 
-    qarr = dataQ[:, y, x]
-    uarr = dataU[:, y, x]
-    iarr = dataI[:, y, x]
+    qarr = dataQ[
+        :,
+        y-n_pix_pad:y+n_pix_pad,
+        x-n_pix_pad:x+n_pix_pad,
+    ]
+    uarr = dataU[
+        :,
+        y-n_pix_pad:y+n_pix_pad,
+        x-n_pix_pad:x+n_pix_pad,
+    ]
+    iarr = dataI[
+        :,
+        y-n_pix_pad:y+n_pix_pad,
+        x-n_pix_pad:x+n_pix_pad,
+    ]
+
+    # Convert to Jy if needed
+    assert n_pix_pad >= 0, "n_pix_pad must be >= 0"
+    if n_pix_pad > 0:
+        iarr = np.nansum(iarr, axis=(1, 2)) / cube.pixels_per_beam
+        qarr = np.nansum(qarr, axis=(1, 2)) / cube.pixels_per_beam
+        uarr = np.nansum(uarr, axis=(1, 2)) / cube.pixels_per_beam
 
     iarr[iarr == 0] = np.nan
     qarr[qarr == 0] = np.nan
@@ -437,6 +459,7 @@ def rmsynthoncut1d(
             debug=debug,
             fit_function=fit_function,
             prefixOut=prefix,
+            units="Jy/beam" if n_pix_pad == 0 else "Jy",
         )
     except Exception as err:
         traceback.print_tb(err.__traceback__)
