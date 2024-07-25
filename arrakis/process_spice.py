@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Arrakis single-field pipeline"""
+"""Arrakis single-field pipeline."""
+
+from __future__ import annotations
 
 import argparse
 import logging
-import os
 from importlib import resources
 from pathlib import Path
 
@@ -32,12 +33,15 @@ from arrakis.validate import validation_parser
 
 
 @flow(name="Combining+Synthesis on Arrakis")
-def process_spice(args, host: str, task_runner: BaseTaskRunner) -> None:
-    """Workflow to process the SPICE-RACS data
+def process_spice(
+    args: configargparse.Namespace, host: str, task_runner: BaseTaskRunner
+) -> None:
+    """Workflow to process the SPICE-RACS data.
 
     Args:
         args (configargparse.Namespace): Configuration parameters for this run
         host (str): Host address of the mongoDB.
+        task_runner (BaseTaskRunner): Task runner for the workflow.
     """
     outfile = f"{args.field}.pipe.test.fits" if args.outfile is None else args.outfile
 
@@ -198,8 +202,7 @@ def process_spice(args, host: str, task_runner: BaseTaskRunner) -> None:
 
 
 def save_args(args: configargparse.Namespace) -> Path:
-    """Helper function to create a record of the input configuration arguments that
-    govern the pipeline instance
+    """Helper function to create a record of the input configuration arguments that govern the pipeline instance.
 
     Args:
         args (configargparse.Namespace): Supplied arguments for the Arrakis pipeline instance
@@ -208,22 +211,22 @@ def save_args(args: configargparse.Namespace) -> Path:
         Path: Output path of the saved file
     """
     args_yaml = yaml.dump(vars(args))
-    args_yaml_f = os.path.abspath(f"{args.field}-config-{Time.now().fits}.yaml")
+    args_yaml_f = Path(f"{args.field}-config-{Time.now().fits}.yaml").absolute()
     logger.info(f"Saving config to '{args_yaml_f}'")
-    with open(args_yaml_f, "w") as f:
+    with args_yaml_f.open("w") as f:
         f.write(args_yaml)
 
     return Path(args_yaml_f)
 
 
 def create_dask_runner(
-    dask_config: str,
+    dask_config: Path | None,
     overload: bool = False,
 ) -> DaskTaskRunner:
-    """Create a DaskTaskRunner
+    """Create a DaskTaskRunner.
 
     Args:
-        dask_config (str): Configuraiton file for the DaskTaskRunner
+        dask_config (Path | None): Configuraiton file for the DaskTaskRunner
         overload (bool, optional): Overload the options for threadded work. Defaults to False.
 
     Returns:
@@ -235,7 +238,7 @@ def create_dask_runner(
         config_dir = resources.files("arrakis.configs")
         dask_config = config_dir / "default.yaml"
 
-    with open(dask_config) as f:
+    with dask_config.open() as f:
         logger.info(f"Loading {dask_config}")
         yaml_config: dict = yaml.safe_load(f)
 
@@ -259,7 +262,7 @@ def create_dask_runner(
 
 
 def main(args: configargparse.Namespace) -> None:
-    """Main script
+    """Main script.
 
     Args:
         args (configargparse.Namespace): Command line arguments.
@@ -282,7 +285,7 @@ def main(args: configargparse.Namespace) -> None:
         # This is the client for the imager component of the arrakis
         # pipeline.
         dask_runner = create_dask_runner(
-            dask_config=args.imager_dask_config,
+            dask_config=Path(args.imager_dask_config),
             overload=True,
         )
 
@@ -340,7 +343,7 @@ def main(args: configargparse.Namespace) -> None:
 
     # This is the client and pipeline for the RM extraction
     dask_runner_2 = create_dask_runner(
-        dask_config=args.dask_config,
+        dask_config=Path(args.dask_config),
     )
 
     # Define flow
@@ -350,6 +353,15 @@ def main(args: configargparse.Namespace) -> None:
 
 
 def pipeline_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create the parser for the pipeline.
+
+    Args:
+        parent_parser (bool, optional): If this is a parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The parser for the pipeline.
+
+    """
     descStr = f"""
     {logo_str}
 
@@ -368,13 +380,13 @@ def pipeline_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
     parser = pipeline_parser.add_argument_group("pipeline arguments")
     parser.add_argument(
         "--dask_config",
-        type=str,
+        type=Path,
         default=None,
         help="Config file for Dask SlurmCLUSTER.",
     )
     parser.add_argument(
         "--imager_dask_config",
-        type=str,
+        type=Path,
         default=None,
         help="Config file for Dask SlurmCLUSTER.",
     )
@@ -407,7 +419,7 @@ def pipeline_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def cli():
-    """Command-line interface"""
+    """Command-line interface."""
     # Help string to be shown using the -h option
 
     pipe_parser = pipeline_parser(parent_parser=True)

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Correct for the ionosphere in parallel"""
+"""Correct for the ionosphere in parallel."""
+
+from __future__ import annotations
 
 import argparse
 import logging
-import os
+from collections.abc import Callable
 from pathlib import Path
 from pprint import pformat
-from typing import Callable, Dict, List
 from typing import NamedTuple as Struct
-from typing import Optional, Union
 from urllib.error import URLError
 
 import astropy.units as u
@@ -34,43 +34,61 @@ TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
 
 class Prediction(Struct):
-    """FRion prediction"""
+    """FRion prediction.
 
-    predict_file: str
+    Attributes:
+        predict_file (Path): FRion prediction file
+        update (pymongo.UpdateOne): Pymongo update query
+
+    """
+
+    predict_file: Path
+    """FRion prediction file"""
     update: pymongo.UpdateOne
+    """Pymongo update query"""
 
 
 class FrionResults(Struct):
+    """FRion results.
+
+    Attributes:
+        prediction (Prediction): FRion prediction
+        correction (pymongo.UpdateOne): Pymongo update query
+
+    """
+
     prediction: Prediction
+    """FRion prediction"""
     correction: pymongo.UpdateOne
+    """Pymongo update query"""
 
 
 @task(name="FRion correction")
 def correct_worker(
-    beam: Dict, outdir: str, field: str, prediction: Prediction, island: dict
+    beam: dict, outdir: Path, field: str, prediction: Prediction, island: dict
 ) -> pymongo.UpdateOne:
-    """Apply FRion corrections to a single island
+    """Apply FRion corrections to a single island.
 
     Args:
         beam (Dict): MongoDB beam document
         outdir (str): Output directory
         field (str): RACS field name
-        predict_file (str): FRion prediction file
-        island_id (str): RACS island ID
+        prediction (Prediction): FRion prediction
+        island (str): Island document
 
     Returns:
         pymongo.UpdateOne: Pymongo update query
     """
     predict_file = prediction.predict_file
     island_id = island["Source_ID"]
-    qfile = os.path.join(outdir, beam["beams"][field]["q_file"])
-    ufile = os.path.join(outdir, beam["beams"][field]["u_file"])
+    qfile = outdir / str(beam["beams"][field]["q_file"])
+    ufile = outdir / str(beam["beams"][field]["u_file"])
 
     qout = beam["beams"][field]["q_file"].replace(".fits", ".ion.fits")
     uout = beam["beams"][field]["u_file"].replace(".fits", ".ion.fits")
 
-    qout_f = os.path.join(outdir, qout)
-    uout_f = os.path.join(outdir, uout)
+    qout_f = outdir / str(qout)
+    uout_f = outdir / str(uout)
 
     correct.apply_correction_to_files(
         qfile, ufile, predict_file, qout_f, uout_f, overwrite=True
@@ -89,21 +107,20 @@ def correct_worker(
 
 @task(name="FRion predction")
 def predict_worker(
-    island: Dict,
+    island: dict,
     field: str,
-    beam: Dict,
+    beam: dict,
     start_time: Time,
     end_time: Time,
     freq: np.ndarray,
     cutdir: Path,
-    plotdir: Path,
     server: str = "ftp://ftp.aiub.unibe.ch/CODE/",
     prefix: str = "",
-    formatter: Optional[Union[str, Callable]] = None,
-    proxy_server: Optional[str] = None,
+    formatter: str | Callable | None = None,
+    proxy_server: str | None = None,
     pre_download: bool = False,
 ) -> Prediction:
-    """Make FRion prediction for a single island
+    """Make FRion prediction for a single island.
 
     Args:
         island (Dict): Pymongo island document
@@ -113,14 +130,18 @@ def predict_worker(
         end_time (Time): End time of the observation
         freq (np.ndarray): Array of frequencies with units
         cutdir (str): Cutout directory
-        plotdir (str): Plot directory
+        server (str, optional): IONEX server. Defaults to "ftp://ftp.aiub.unibe.ch/CODE/".
+        prefix (str, optional): IONEX prefix. Defaults to "".
+        formatter (str | Callable | None, optional): IONEX formatter. Defaults to None.
+        proxy_server (str | None, optional): Proxy server. Defaults to None.
+        pre_download (bool, optional): Pre-download IONEX files. Defaults to False.
 
     Returns:
-        Tuple[str, pymongo.UpdateOne]: FRion prediction file and pymongo update query
+        Prediction: predict_file and update
     """
     logger.setLevel(logging.INFO)
 
-    ifile: Path = cutdir / beam["beams"][field]["i_file"]
+    ifile: Path = cutdir / str(beam["beams"][field]["i_file"])
     i_dir = ifile.parent
     iname = island["Source_ID"]
     ra = island["RA"]
@@ -170,12 +191,13 @@ def predict_worker(
             logger.warning("Trying next prefix.")
             continue
     else:
-        raise FileNotFoundError(
-            f"Could not find IONEX file with prefixes {_prefixes_to_try}"
-        )
+        msg = f"Could not find IONEX file with prefixes {_prefixes_to_try}"
+        raise FileNotFoundError(msg)
 
-    predict_file = os.path.join(i_dir, f"{iname}_ion.txt")
-    predict.write_modulation(freq_array=freq, theta=theta, filename=predict_file)
+    predict_file = i_dir / f"{iname}_ion.txt"
+    predict.write_modulation(
+        freq_array=freq, theta=theta, filename=predict_file.as_posix()
+    )
     logger.info(f"Prediction file: {predict_file}")
 
     myquery = {"Source_ID": iname}
@@ -199,11 +221,19 @@ def predict_worker(
 
 
 @task(name="Index beams")
-def index_beams(island: dict, beams: List[dict]) -> dict:
+def index_beams(island: dict, beams: list[dict]) -> dict:
+    """Index beams by island ID.
+
+    Args:
+        island (dict): Island document
+        beams (list[dict]): List of beam documents
+
+    Returns:
+        dict: Beam document
+    """
     island_id = island["Source_ID"]
-    beam_idx = [i for i, b in enumerate(beams) if b["Source_ID"] == island_id][0]
-    beam = beams[beam_idx]
-    return beam
+    beam_idx = next(i for i, b in enumerate(beams) if b["Source_ID"] == island_id)
+    return beams[beam_idx]
 
 
 # We reduce the inner loop to a serial call
@@ -220,10 +250,30 @@ def serial_loop(
     plotdir: Path,
     ionex_server: str,
     ionex_prefix: str,
-    ionex_proxy_server: Optional[str],
-    ionex_formatter: Optional[Union[str, Callable]],
+    ionex_proxy_server: str | None,
+    ionex_formatter: str | Callable | None,
     ionex_predownload: bool,
 ) -> FrionResults:
+    """Serial loop for FRion.
+
+    Args:
+        island (dict): Island document
+        field (str): Field name
+        beam (dict): Beam document
+        start_time (Time): Start time
+        end_time (Time): End time
+        freq_hz_array (np.ndarray): Frequencies in Hz
+        cutdir (Path): Cutout directory
+        plotdir (Path): Plot directory
+        ionex_server (str): IONEX server
+        ionex_prefix (str): IONEX prefix
+        ionex_proxy_server (str | None): IONEX proxy server
+        ionex_formatter (str | Callable | None): IONEX formatter
+        ionex_predownload (bool): Pre-download IONEX files
+
+    Returns:
+        FrionResults: _description_
+    """
     prediction = predict_worker.fn(
         island=island,
         field=field,
@@ -256,18 +306,18 @@ def main(
     outdir: Path,
     host: str,
     epoch: int,
-    sbid: Optional[int] = None,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    sbid: int | None = None,
+    username: str | None = None,
+    password: str | None = None,
     database=False,
     ionex_server: str = "ftp://ftp.aiub.unibe.ch/CODE/",
     ionex_prefix: str = "codg",
-    ionex_proxy_server: Optional[str] = None,
-    ionex_formatter: Optional[Union[str, Callable]] = "ftp.aiub.unibe.ch",
+    ionex_proxy_server: str | None = None,
+    ionex_formatter: str | Callable | None = "ftp.aiub.unibe.ch",
     ionex_predownload: bool = False,
-    limit: Optional[int] = None,
+    limit: int | None = None,
 ):
-    """FRion flow
+    """FRion flow.
 
     Args:
         field (str): RACS field name
@@ -279,6 +329,7 @@ def main(
         password (str, optional): Mongo passwrod. Defaults to None.
         database (bool, optional): Update database. Defaults to False.
         ionex_server (str, optional): IONEX server. Defaults to "ftp://ftp.aiub.unibe.ch/CODE/".
+        ionex_prefix (str, optional): IONEX prefix. Defaults to "codg".
         ionex_proxy_server (str, optional): Proxy server. Defaults to None.
         ionex_formatter (Union[str, Callable], optional): IONEX formatter. Defaults to "ftp.aiub.unibe.ch".
         ionex_predownload (bool, optional): Pre-download IONEX files. Defaults to False.
@@ -308,7 +359,8 @@ def main(
             field_col=field_col,
         )
         if not sbid_check:
-            raise ValueError(f"SBID {sbid} does not match field {field}")
+            msg = f"SBID {sbid} does not match field {field}"
+            raise ValueError(msg)
 
     query_1 = {"$and": [{f"beams.{field}": {"$exists": True}}]}
 
@@ -334,11 +386,12 @@ def main(
     # Raise error if too much or too little data
     if field_col.count_documents(query_3) > 1:
         logger.error(f"More than one SELECT=1 for {field} - try supplying SBID.")
-        raise ValueError(f"More than one SELECT=1 for {field} - try supplying SBID.")
+        msg = f"More than one SELECT=1 for {field} - try supplying SBID."
+        raise ValueError(msg)
 
-    elif field_col.count_documents(query_3) == 0:
+    if field_col.count_documents(query_3) == 0:
         logger.error(f"No data for {field} with {query_3}, trying without SELECT=1.")
-        query_3 = query_3 = {"$and": [{"FIELD_NAME": f"{field}"}]}
+        query_3 = {"$and": [{"FIELD_NAME": f"{field}"}]}
         if sbid is not None:
             query_3["$and"].append({"SBID": sbid})
         field_data = field_col.find_one({"FIELD_NAME": f"{field}"})
@@ -352,7 +405,7 @@ def main(
     end_time = start_time + TimeDelta(field_data["SCAN_TINT"] * u.second)
 
     freq = getfreq(
-        os.path.join(cutdir, f"{beams[0]['beams'][f'{field}']['q_file']}"),
+        cutdir / f"{beams[0]['beams'][f'{field}']['q_file']}",
     )
 
     if limit is not None:
@@ -362,7 +415,7 @@ def main(
     beams_cor = []
     for island in islands:
         island_id = island["Source_ID"]
-        beam_idx = [i for i, b in enumerate(beams) if b["Source_ID"] == island_id][0]
+        beam_idx = next(i for i, b in enumerate(beams) if b["Source_ID"] == island_id)
         beam = beams[beam_idx]
         beams_cor.append(beam)
 
@@ -386,7 +439,7 @@ def main(
     frion_results = []
     assert len(islands) == len(beams_cor), "Islands and beams must be the same length"
     for island, beam in tqdm(
-        zip(islands, beams_cor),
+        zip(islands, beams_cor, strict=False),
         desc="Submitting tasks",
         file=TQDM_OUT,
         total=len(islands),
@@ -427,6 +480,14 @@ def main(
 
 
 def frion_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create a parser for FRion.
+
+    Args:
+        parent_parser (bool, optional): If parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The parser
+    """
     # Help string to be shown using the -h option
     descStr = f"""
     {logo_str}
@@ -480,7 +541,7 @@ def frion_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def cli():
-    """Command-line interface"""
+    """Command-line interface."""
     import warnings
 
     from astropy.utils.exceptions import AstropyWarning

@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
+import contextlib
 import os
 from glob import glob
 from pathlib import Path
 from shutil import SameFileError, copyfile
 
-from astropy.table import Table
-
 from arrakis.logger import logger
 from arrakis.utils.io import prsync, rsync, try_mkdir
 from arrakis.utils.meta import yes_or_no
+from astropy.table import Table
 
 
 def main(
@@ -68,17 +70,14 @@ def main(
         idx = abspath.find("_F")
         f_no = abspath[idx + 1 : idx + 4]
         newpath = abspath.replace(f_no, "F00")
-        try:
+        with contextlib.suppress(SameFileError):
             copyfile(abspath, newpath)
-        except SameFileError:
-            pass
         logger.debug(os.path.basename(newpath))
 
-    if clean:
-        if yes:
-            files = glob(f"{check}/CONTCUBE*")
-            for f in files:
-                os.remove(f)
+    if clean and yes:
+        files = glob(f"{check}/CONTCUBE*")
+        for f in files:
+            os.remove(f)
 
 
 def cli():

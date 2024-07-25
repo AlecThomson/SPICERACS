@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Run RM-synthesis on cutouts in parallel"""
+"""Run RM-synthesis on cutouts in parallel."""
+
+from __future__ import annotations
 
 import argparse
 import logging
-import os
 import warnings
 from pathlib import Path
 from pprint import pformat
-from typing import Optional
 from shutil import copyfile
 
+import matplotlib as mpl
 import numpy as np
-from matplotlib import pyplot as plt
-import matplotlib
 import pymongo
+from matplotlib import pyplot as plt
 from prefect import flow, task
 from RMtools_1D import do_RMclean_1D
 from RMtools_3D import do_RMclean_3D
@@ -29,7 +29,7 @@ from arrakis.utils.database import (
 )
 from arrakis.utils.pipeline import generic_parser, logo_str, workdir_arg_parser
 
-matplotlib.use("Agg")
+mpl.use("Agg")
 logger.setLevel(logging.INFO)
 TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
@@ -42,12 +42,12 @@ def rmclean1d(
     cutoff: float = -3,
     maxIter=10000,
     gain=0.1,
-    sbid: Optional[int] = None,
+    sbid: int | None = None,
     savePlots=False,
     rm_verbose=True,
     window=None,
 ) -> pymongo.UpdateOne:
-    """1D RM-CLEAN
+    """1D RM-CLEAN.
 
     Args:
         field (str): RACS field name.
@@ -56,8 +56,10 @@ def rmclean1d(
         cutoff (float, optional): CLEAN cutouff (in sigma). Defaults to -3.
         maxIter (int, optional): Maximum CLEAN interation. Defaults to 10000.
         gain (float, optional): CLEAN gain. Defaults to 0.1.
+        sbid (int, optional): SBID. Defaults to None.
         savePlots (bool, optional): Save CLEAN plots. Defaults to False.
         rm_verbose (bool, optional): Verbose RM-CLEAN. Defaults to True.
+        window (float, optional): Further CLEAN in mask to this threshold. Defaults to None.
 
     Returns:
         pymongo.UpdateOne: MongoDB update query.
@@ -76,14 +78,15 @@ def rmclean1d(
     weightFile = outdir / f"{rm1dfiles['weights']}"
     rmSynthFile = outdir / f"{rm1dfiles['summary_json']}"
 
-    prefix = os.path.join(os.path.abspath(os.path.dirname(fdfFile)), cname)
+    prefix = (fdfFile.parent.absolute() / cname).as_posix()
 
     # Sanity checks
     for f in [weightFile, fdfFile, rmsfFile, rmSynthFile]:
         logger.debug(f"Checking {f.absolute()}")
         if not f.exists():
             logger.fatal(f"File does not exist: '{f}'.")
-            raise FileNotFoundError(f"File does not exist: '{f}'")
+            msg = f"File does not exist: '{f}'"
+            raise FileNotFoundError(msg)
 
     nBits = 32
     try:
@@ -112,13 +115,9 @@ def rmclean1d(
 
     # Ensure JSON serializable
     for k, v in outdict.items():
-        if isinstance(v, np.float_):
+        if isinstance(v, np.float64 | np.float32):
             outdict[k] = float(v)
-        elif isinstance(v, np.float32):
-            outdict[k] = float(v)
-        elif isinstance(v, np.int_):
-            outdict[k] = int(v)
-        elif isinstance(v, np.int32):
+        elif isinstance(v, np.int_ | np.int32):
             outdict[k] = int(v)
         elif isinstance(v, np.ndarray):
             outdict[k] = v.tolist()
@@ -151,17 +150,19 @@ def rmclean3d(
     field: str,
     island: dict,
     outdir: Path,
-    sbid: Optional[int] = None,
+    sbid: int | None = None,
     cutoff: float = -3,
     maxIter=10000,
     gain=0.1,
     rm_verbose=False,
 ) -> pymongo.UpdateOne:
-    """Run RM-CLEAN on 3D cube
+    """Run RM-CLEAN on 3D cube.
 
     Args:
+        field (str): RACS field name.
         island (dict): MongoDB island entry.
         outdir (Path): Output directory.
+        sbid (int, optional): SBID. Defaults to None.
         cutoff (float, optional): CLEAN cutoff (in sigma). Defaults to -3.
         maxIter (int, optional): Max CLEAN iterations. Defaults to 10000.
         gain (float, optional): CLEAN gain. Defaults to 0.1.
@@ -170,7 +171,6 @@ def rmclean3d(
     Returns:
         pymongo.UpdateOne: MongoDB update query.
     """
-
     iname = island["Source_ID"]
     prefix = f"{iname}_"
     rm3dfiles = island["rm_outputs_3d"]["rm3dfiles"]
@@ -218,25 +218,27 @@ def main(
     outdir: Path,
     host: str,
     epoch: int,
-    sbid: Optional[int] = None,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    sbid: int | None = None,
+    username: str | None = None,
+    password: str | None = None,
     dimension="1d",
     database=False,
     savePlots=True,
-    limit: Optional[int] = None,
+    limit: int | None = None,
     cutoff: float = -3,
     maxIter=10000,
     gain=0.1,
     window=None,
     rm_verbose=False,
 ):
-    """Run RM-CLEAN on cutouts flow
+    """Run RM-CLEAN on cutouts flow.
 
     Args:
         field (str): RACS field name.
         outdir (Path): Output directory.
         host (str): MongoDB host IP.
+        epoch (int): Epoch number.
+        sbid (int, optional): SBID. Defaults to None.
         username (str, optional): Mongo username. Defaults to None.
         password (str, optional): Mongo password. Defaults to None.
         dimension (str, optional): Which dimension to run RM-CLEAN. Defaults to "1d".
@@ -248,6 +250,7 @@ def main(
         cutoff (float, optional): CLEAN cutoff (in sigma). Defaults to -3.
         maxIter (int, optional): Max CLEAN iterations. Defaults to 10000.
         gain (float, optional): Clean gain. Defaults to 0.1.
+        window (float, optional): Further CLEAN in mask to this threshold. Defaults to None.
         rm_verbose (bool, optional): Verbose output from RM-CLEAN. Defaults to False.
     """
     outdir = outdir.absolute() / "cutouts"
@@ -271,7 +274,8 @@ def main(
             field_col=field_col,
         )
         if not sbid_check:
-            raise ValueError(f"SBID {sbid} does not match field {field}")
+            msg = f"SBID {sbid} does not match field {field}"
+            raise ValueError(msg)
 
     query = {"$and": [{f"beams.{field}": {"$exists": True}}]}
     if sbid is not None:
@@ -401,7 +405,8 @@ def main(
             outputs.append(output)
 
     else:
-        raise ValueError(f"Dimension {dimension} not supported.")
+        msg = f"Dimension {dimension} not supported."
+        raise ValueError(msg)
 
     if database:
         logger.info("Updating database...")
@@ -416,6 +421,15 @@ def main(
 
 
 def clean_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create a parser for RM-CLEAN on cutouts.
+
+    Args:
+        parent_parser (bool, optional): Parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The parser.
+
+    """
     # Help string to be shown using the -h option
     descStr = f"""
     {logo_str}
@@ -459,8 +473,7 @@ def clean_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def cli():
-    """Command-line interface"""
-
+    """Command-line interface."""
     from astropy.utils.exceptions import AstropyWarning
 
     warnings.simplefilter("ignore", category=AstropyWarning)

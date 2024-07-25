@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """DANGER ZONE: Purge directories of un-needed FITS files."""
 
+from __future__ import annotations
+
 import argparse
 import logging
 import shutil
 import tarfile
 from pathlib import Path
-from typing import List
 
-from arrakis.utils.io import verify_tarball
 import astropy.units as u
 import numpy as np
 from prefect import flow, get_run_logger, task
 from tqdm.auto import tqdm
 
 from arrakis.logger import TqdmToLogger, UltimateHelpFormatter, logger
+from arrakis.utils.io import verify_tarball
 from arrakis.utils.pipeline import generic_parser, logo_str
 
 logger.setLevel(logging.INFO)
@@ -24,11 +25,10 @@ TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
 # @task(name="Purge cublets")
 def purge_cubelet_beams(filepath: Path) -> Path:
-    """Clean up beam images
+    """Clean up beam images.
 
     Args:
-        workdir (str): Directory containing images
-        stoke (str): Stokes parameter
+        filepath (Path): Path to the beam image
     """
     # Clean up beam images
     logger.critical(f"Removing {filepath}")
@@ -39,10 +39,11 @@ def purge_cubelet_beams(filepath: Path) -> Path:
 
 @task(name="Make cutout tarball")
 def make_cutout_tarball(cutdir: Path, overwrite: bool = False) -> Path:
-    """Make a tarball of the cutouts directory
+    """Make a tarball of the cutouts directory.
 
     Args:
         cutdir (Path): Directory containing cutouts
+        overwrite (bool): Overwrite existing tarball
 
     Returns:
         Path: Path to the tarball
@@ -62,7 +63,8 @@ def make_cutout_tarball(cutdir: Path, overwrite: bool = False) -> Path:
 
     verification = verify_tarball(tarball)
     if not verification:
-        raise RuntimeError(f"Verification of {tarball} failed!")
+        msg = f"Verification of {tarball} failed!"
+        raise RuntimeError(msg)
 
     logger.critical(f"Removing {cutdir}")
     shutil.rmtree(cutdir)
@@ -74,13 +76,12 @@ def main(
     datadir: Path,
     overwrite: bool = False,
 ) -> None:
-    """Clean up beam images flow
+    """Clean up beam images flow.
 
     Args:
         datadir (Path): Directory with sub dir 'cutouts'
         overwrite (bool): Overwrite existing tarball
     """
-
     cutdir = datadir / "cutouts"
 
     # First, make a tarball of the cutouts
@@ -106,7 +107,7 @@ def main(
     total_file_size = np.sum([p.stat().st_size for p in to_purge_all]) * u.byte
     logger.warning(f"Purging {len(to_purge_all)} files from {datadir}")
     logger.warning(f"Will free {total_file_size.to(u.GB)}")
-    purged: List[Path] = []
+    purged: list[Path] = []
     for to_purge in tqdm(to_purge_all, file=TQDM_OUT, desc="Purging big beams"):
         purged.append(purge_cubelet_beams(to_purge))
     logger.info(f"Files purged: {len(purged)}")
@@ -115,6 +116,14 @@ def main(
 
 
 def cleanup_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create a parser for the cleanup stage.
+
+    Args:
+        parent_parser (bool, optional): If a parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The parser
+    """
     # Help string to be shown using the -h option
     descStr = f"""
     {logo_str}
@@ -142,7 +151,7 @@ def cleanup_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def cli():
-    """Command-line interface"""
+    """Command-line interface."""
     gen_parser = generic_parser(parent_parser=True)
     clean_parser = cleanup_parser(parent_parser=True)
     parser = argparse.ArgumentParser(

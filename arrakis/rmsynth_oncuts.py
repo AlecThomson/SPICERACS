@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Run RM-CLEAN on cutouts in parallel"""
+"""Run RM-CLEAN on cutouts in parallel."""
+
+from __future__ import annotations
 
 import argparse
 import logging
-import os
 import traceback
 import warnings
 from pathlib import Path
 from pprint import pformat
 from shutil import copyfile
-from typing import List
 from typing import NamedTuple as Struct
-from typing import Optional, Tuple, Union
 
 import astropy.units as u
-import matplotlib
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -44,13 +43,13 @@ from arrakis.utils.fitsutils import getfreq
 from arrakis.utils.fitting import fit_pl, fitted_mean, fitted_std
 from arrakis.utils.pipeline import generic_parser, logo_str, workdir_arg_parser
 
-matplotlib.use("Agg")
+mpl.use("Agg")
 logger.setLevel(logging.INFO)
 TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
 
 class Spectrum(Struct):
-    """Single spectrum"""
+    """Single spectrum."""
 
     data: np.ndarray
     """The spectrum data"""
@@ -65,7 +64,7 @@ class Spectrum(Struct):
 
 
 class StokesSpectra(Struct):
-    """Multi Stokes spectra"""
+    """Multi Stokes spectra."""
 
     i: Spectrum
     """The Stokes I spectrum"""
@@ -76,32 +75,42 @@ class StokesSpectra(Struct):
 
 
 class StokesIFitResult(Struct):
-    """Stokes I fit results"""
+    """Stokes I fit results.
 
-    alpha: Optional[float]
+    Attributes:
+        alpha (float | None): The alpha parameter of the fit
+        amplitude (float | None): The amplitude parameter of the fit
+        x_0 (float | None): The x_0 parameter of the fit
+        model_repr (str | None): The model representation of the fit
+        modStokesI (np.ndarray | None): The model Stokes I spectrum
+        fit_dict (dict | None): The dictionary of the fit results
+
+    """
+
+    alpha: float | None
     """The alpha parameter of the fit"""
-    amplitude: Optional[float]
+    amplitude: float | None
     """The amplitude parameter of the fit"""
-    x_0: Optional[float]
+    x_0: float | None
     """The x_0 parameter of the fit"""
-    model_repr: Optional[str]
+    model_repr: str | None
     """The model representation of the fit"""
-    modStokesI: Optional[np.ndarray]
+    modStokesI: np.ndarray | None
     """The model Stokes I spectrum"""
-    fit_dict: Optional[dict]
+    fit_dict: dict | None
     """The dictionary of the fit results"""
 
 
 @task(name="3D RM-synthesis")
 def rmsynthoncut3d(
     island_id: str,
-    beam_tuple: Tuple[str, pd.Series],
+    beam_tuple: tuple[str, pd.Series],
     outdir: Path,
     freq: np.ndarray,
     field: str,
-    sbid: Optional[int] = None,
-    phiMax_radm2: Optional[float] = None,
-    dPhi_radm2: Optional[float] = None,
+    sbid: int | None = None,
+    phiMax_radm2: float | None = None,
+    dPhi_radm2: float | None = None,
     nSamples: int = 5,
     weightType: str = "variance",
     fitRMSF: bool = True,
@@ -109,40 +118,44 @@ def rmsynthoncut3d(
     rm_verbose: bool = False,
     ion: bool = False,
 ) -> pymongo.UpdateOne:
-    """3D RM-synthesis
+    """3D RM-synthesis.
 
     Args:
-        island_id (str): RACS Island ID
-        freq (list): Frequencies in Hz
-        host (str): Host of MongoDB
-        field (str): RACS field ID
-        database (bool, optional): Update MongoDB. Defaults to False.
-        phiMax_radm2 (float, optional): Max Faraday depth. Defaults to None.
-        dPhi_radm2 (float, optional): Faraday dpeth channel width. Defaults to None.
-        nSamples (int, optional): Samples acorss RMSF. Defaults to 5.
-        weightType (str, optional): Weighting type. Defaults to 'variance'.
-        fitRMSF (bool, optional): Fit RMSF. Defaults to False.
-        not_RMSF (bool, optional): Skip calculation of RMSF. Defaults to False.
-        rm_verbose (bool, optional): Verbose RMsynth. Defaults to False.
+        island_id (str): Island ID
+        beam_tuple (tuple[str, pd.Series]): Beam tuple
+        outdir (Path): Output directory
+        freq (np.ndarray): Frequencies in Hz
+        field (str): Field name
+        sbid (int | None, optional): SBID. Defaults to None.
+        phiMax_radm2 (float | None, optional): Maximum Faraday depth. Defaults to None.
+        dPhi_radm2 (float | None, optional): Faraday depth spacing. Defaults to None.
+        nSamples (int, optional): Number of RMSF samples. Defaults to 5.
+        weightType (str, optional): Weight type. Defaults to "variance".
+        fitRMSF (bool, optional): Fit the RMSF. Defaults to True.
+        not_RMSF (bool, optional): Ignore the RMSF. Defaults to False.
+        rm_verbose (bool, optional): Verbose output (RM-Tools). Defaults to False.
+        ion (bool, optional): Use ion files. Defaults to False.
+
+    Returns:
+        pymongo.UpdateOne: MongoDB update operation
     """
     beam = dict(beam_tuple[1])
     iname = island_id
-    ifile = os.path.join(outdir, beam["beams"][field]["i_file"])
+    ifile = outdir / str(beam["beams"][field]["i_file"])
 
     if ion:
-        qfile = os.path.join(outdir, beam["beams"][field]["q_file_ion"])
-        ufile = os.path.join(outdir, beam["beams"][field]["u_file_ion"])
+        qfile = outdir / str(beam["beams"][field]["q_file_ion"])
+        ufile = outdir / str(beam["beams"][field]["u_file_ion"])
     else:
-        qfile = os.path.join(outdir, beam["beams"][field]["q_file"])
-        ufile = os.path.join(outdir, beam["beams"][field]["u_file"])
-    # vfile = beam['beams'][field]['v_file']
+        qfile = outdir / str(beam["beams"][field]["q_file"])
+        ufile = outdir / str(beam["beams"][field]["u_file"])
 
     header: fits.Header
     dataQ: np.ndarray
     dataI: np.ndarray
-    header, dataQ = do_RMsynth_3D.readFitsCube(qfile, rm_verbose)
+    header, dataQ = do_RMsynth_3D.readFitsCube(qfile.as_posix(), rm_verbose)
     header, dataU = do_RMsynth_3D.readFitsCube(ufile, rm_verbose)
-    header, dataI = do_RMsynth_3D.readFitsCube(ifile, rm_verbose)
+    header, dataI = do_RMsynth_3D.readFitsCube(ifile.as_posix(), rm_verbose)
 
     dataQ = np.squeeze(dataQ)
     dataU = np.squeeze(dataU)
@@ -188,7 +201,7 @@ def rmsynthoncut3d(
         headtemplate=header,
         fitRMSF=fitRMSF,
         prefixOut=prefix,
-        outDir=os.path.dirname(ifile),
+        outDir=ifile.parent.as_posix(),
         write_seperate_FDF=True,
         not_rmsf=not_RMSF,
         nBits=32,
@@ -199,20 +212,20 @@ def rmsynthoncut3d(
     # Prep header
     head_dict = dict(header)
     head_dict.pop("", None)
-    if "COMMENT" in head_dict.keys():
+    if "COMMENT" in head_dict:
         head_dict["COMMENT"] = str(head_dict["COMMENT"])
 
-    outer_dir = os.path.basename(os.path.dirname(ifile))
+    outer_dir = Path(ifile.parent.name)
 
     newvalues = {
         "field": save_name,
         "rm3dfiles": {
-            "FDF_real_dirty": os.path.join(outer_dir, f"{prefix}FDF_real_dirty.fits"),
-            "FDF_im_dirty": os.path.join(outer_dir, f"{prefix}FDF_im_dirty.fits"),
-            "FDF_tot_dirty": os.path.join(outer_dir, f"{prefix}FDF_tot_dirty.fits"),
-            "RMSF_real": os.path.join(outer_dir, f"{prefix}RMSF_real.fits"),
-            "RMSF_tot": os.path.join(outer_dir, f"{prefix}RMSF_tot.fits"),
-            "RMSF_FWHM": os.path.join(outer_dir, f"{prefix}RMSF_FWHM.fits"),
+            "FDF_real_dirty": (outer_dir / f"{prefix}FDF_real_dirty.fits").as_posix(),
+            "FDF_im_dirty": (outer_dir / f"{prefix}FDF_im_dirty.fits").as_posix(),
+            "FDF_tot_dirty": (outer_dir / f"{prefix}FDF_tot_dirty.fits").as_posix(),
+            "RMSF_real": (outer_dir / f"{prefix}RMSF_real.fits").as_posix(),
+            "RMSF_tot": (outer_dir / f"{prefix}RMSF_tot.fits").as_posix(),
+            "RMSF_FWHM": (outer_dir / f"{prefix}RMSF_FWHM.fits").as_posix(),
         },
         "rmsynth3d": True,
         "header": dict(header),
@@ -224,8 +237,8 @@ def rmsynthoncut3d(
     )
 
 
-def cubelet_bane(cubelet: np.ndarray, header: fits.Header) -> Tuple[np.ndarray]:
-    """Background and noise estimation on a cubelet
+def cubelet_bane(cubelet: np.ndarray, header: fits.Header) -> tuple[np.ndarray]:
+    """Background and noise estimation on a cubelet.
 
     Args:
         cubelet (np.ndarray): 3D array of data
@@ -256,11 +269,11 @@ def cubelet_bane(cubelet: np.ndarray, header: fits.Header) -> Tuple[np.ndarray]:
     background = np.zeros(cubelet.shape[0]) * np.nan
     noise = np.zeros(cubelet.shape[0]) * np.nan
     for chan, plane in enumerate(data_masked):
-        plane = plane[np.isfinite(plane)]
-        if len(plane) == 0:
+        good_plane = plane[np.isfinite(plane)]
+        if len(good_plane) == 0:
             continue
         clipped_plane = sigma_clip(
-            plane, sigma=3, cenfunc=fitted_mean, stdfunc=fitted_std, maxiters=None
+            good_plane, sigma=3, cenfunc=fitted_mean, stdfunc=fitted_std, maxiters=None
         )
         background[chan], noise[chan] = norm.fit(clipped_plane.compressed())
 
@@ -275,11 +288,8 @@ def extract_single_spectrum(
     field_dict: dict,
     outdir: Path,
 ) -> Spectrum:
-    """Extract a single spectrum from a cubelet"""
-    if ion and (stokes == "q" or stokes == "u"):
-        key = f"{stokes}_file_ion"
-    else:
-        key = f"{stokes}_file"
+    """Extract a single spectrum from a cubelet."""
+    key = f"{stokes}_file_ion" if ion and stokes in ("q", "u") else f"{stokes}_file"
     filename = outdir / field_dict[key]
     with fits.open(filename, mode="denywrite", memmap=True) as hdulist:
         hdu = hdulist[0]
@@ -316,7 +326,7 @@ def extract_all_spectra(
     field_dict: dict,
     outdir: Path,
 ) -> StokesSpectra:
-    """Extract spectra from cubelets"""
+    """Extract spectra from cubelets."""
     return StokesSpectra(
         *[
             extract_single_spectrum(
@@ -334,7 +344,7 @@ def extract_all_spectra(
 def sigma_clip_spectra(
     stokes_spectra: StokesSpectra,
 ) -> StokesSpectra:
-    """Sigma clip spectra
+    """Sigma clip spectra.
 
     Find outliers in the RMS spectra and set them to NaN
 
@@ -344,7 +354,7 @@ def sigma_clip_spectra(
     Returns:
         StokesSpectra: The filtered Stokes spectra
     """
-    filter_list: List[np.ndarry] = []
+    filter_list: list[np.ndarry] = []
     for spectrum in stokes_spectra:
         rms_filter = sigma_clip(
             spectrum.rms,
@@ -355,7 +365,7 @@ def sigma_clip_spectra(
         filter_list.append(rms_filter.mask)
     filter_idx = np.any(filter_list, axis=0)
 
-    filtered_data_list: List[Spectrum] = []
+    filtered_data_list: list[Spectrum] = []
     for spectrum in stokes_spectra:
         filtered_data = spectrum.data.copy()
         filtered_data[filter_idx] = np.nan
@@ -373,13 +383,28 @@ def sigma_clip_spectra(
 def fit_stokes_I(
     freq: np.ndarray,
     coord: SkyCoord,
-    tt0: Optional[str] = None,
-    tt1: Optional[str] = None,
+    tt0: str | None = None,
+    tt1: str | None = None,
     do_own_fit: bool = False,
-    iarr: Optional[np.ndarray] = None,
-    rmsi: Optional[np.ndarray] = None,
-    polyOrd: Optional[int] = None,
+    iarr: np.ndarray | None = None,
+    rmsi: np.ndarray | None = None,
+    polyOrd: int | None = None,
 ) -> StokesIFitResult:
+    """Fit stokes I spectrum.
+
+    Args:
+        freq (np.ndarray): Frequencies in Hz
+        coord (SkyCoord): Component coordinate
+        tt0 (str | None, optional): Path to TT0 image. Defaults to None.
+        tt1 (str | None, optional): Path to TT1 image. Defaults to None.
+        do_own_fit (bool, optional): Peform own fit (not RM-Tools). Defaults to False.
+        iarr (np.ndarray | None, optional): Stokes I array. Defaults to None.
+        rmsi (np.ndarray | None, optional): Stokes I rms array. Defaults to None.
+        polyOrd (int | None, optional): Polynomial order. Defaults to None.
+
+    Returns:
+        StokesIFitResult: alpha, amplitude, x_0, model_repr, modStokesI, fit_dict
+    """
     if tt0 and tt1:
         mfs_i_0 = fits.getdata(tt0, memmap=True)
         mfs_i_1 = fits.getdata(tt1, memmap=True)
@@ -405,7 +430,7 @@ def fit_stokes_I(
             fit_dict=None,
         )
 
-    elif do_own_fit:
+    if do_own_fit:
         logger.info("Doing own fit")
         fit_dict = fit_pl(freq=freq, flux=iarr, fluxerr=rmsi, nterms=abs(polyOrd))
 
@@ -418,22 +443,21 @@ def fit_stokes_I(
             fit_dict=fit_dict,
         )
 
-    else:
-        return StokesIFitResult(
-            alpha=None,
-            amplitude=None,
-            x_0=None,
-            model_repr=None,
-            modStokesI=None,
-            fit_dict=None,
-        )
+    return StokesIFitResult(
+        alpha=None,
+        amplitude=None,
+        x_0=None,
+        model_repr=None,
+        modStokesI=None,
+        fit_dict=None,
+    )
 
 
 def update_rmtools_dict(
     mDict: dict,
     fit_dict: dict,
 ) -> dict:
-    """Update the RM-Tools dictionary with the fit results from the Stokes I fit
+    """Update the RM-Tools dictionary with the fit results from the Stokes I fit.
 
     Args:
         mDict (dict): The RM-Tools dictionary
@@ -479,15 +503,15 @@ def update_rmtools_dict(
 
 @task(name="1D RM-synthesis")
 def rmsynthoncut1d(
-    comp_tuple: Tuple[str, pd.Series],
-    beam_tuple: Tuple[str, pd.Series],
+    comp_tuple: tuple[str, pd.Series],
+    beam_tuple: tuple[str, pd.Series],
     outdir: Path,
     freq: np.ndarray,
     field: str,
-    sbid: Optional[int] = None,
+    sbid: int | None = None,
     polyOrd: int = 3,
-    phiMax_radm2: Optional[float] = None,
-    dPhi_radm2: Optional[float] = None,
+    phiMax_radm2: float | None = None,
+    dPhi_radm2: float | None = None,
     nSamples: int = 5,
     weightType: str = "variance",
     fitRMSF: bool = True,
@@ -497,42 +521,49 @@ def rmsynthoncut1d(
     debug: bool = False,
     rm_verbose: bool = False,
     fit_function: str = "log",
-    tt0: Optional[str] = None,
-    tt1: Optional[str] = None,
+    tt0: str | None = None,
+    tt1: str | None = None,
     ion: bool = False,
     do_own_fit: bool = False,
 ) -> pymongo.UpdateOne:
-    """1D RM synthesis
+    """1D RM-synthesis.
 
     Args:
-        comp_id (str): RACS component ID
-        outdir (str): Output directory
-        freq (list): Frequencies in Hz
-        host (str): MongoDB host
-        field (str): RACS field
-        sbid (int, optional): SBID. Defaults to None.
-        database (bool, optional): Update MongoDB. Defaults to False.
-        polyOrd (int, optional): Order of fit to I. Defaults to 3.
-        phiMax_radm2 (float, optional): Max FD. Defaults to None.
-        dPhi_radm2 (float, optional): Delta FD. Defaults to None.
-        nSamples (int, optional): Samples across RMSF. Defaults to 5.
-        weightType (str, optional): Weight type. Defaults to 'variance'.
-        fitRMSF (bool, optional): Fit RMSF. Defaults to False.
+        comp_tuple (tuple[str, pd.Series]): Component tuple
+        beam_tuple (tuple[str, pd.Series]): Beam tuple
+        outdir (Path): Output directory
+        freq (np.ndarray): Frequencies in Hz
+        field (str): Field name
+        sbid (int | None, optional): SBID. Defaults to None.
+        polyOrd (int, optional): Polynomial order. Defaults to 3.
+        phiMax_radm2 (float | None, optional): Max faraday depth. Defaults to None.
+        dPhi_radm2 (float | None, optional): Faraday depth spacing. Defaults to None.
+        nSamples (int, optional): Number of RMSF samples. Defaults to 5.
+        weightType (str, optional): Weight type. Defaults to "variance".
+        fitRMSF (bool, optional): Fit the RMSF. Defaults to True.
         noStokesI (bool, optional): Ignore Stokes I. Defaults to False.
         showPlots (bool, optional): Show plots. Defaults to False.
         savePlots (bool, optional): Save plots. Defaults to False.
-        debug (bool, optional): Turn on debug plots. Defaults to False.
-        rm_verbose (bool, optional): Verbose RMsynth. Defaults to False.
+        debug (bool, optional): Turn on debug output (RM-Tools). Defaults to False.
+        rm_verbose (bool, optional): Turn on verbose output (RM-Tools). Defaults to False.
+        fit_function (str, optional): Type of fit function. Defaults to "log".
+        tt0 (str | None, optional): Path to TT0 image. Defaults to None.
+        tt1 (str | None, optional): Path to TT1 image. Defaults to None.
+        ion (bool, optional): If ion files are used. Defaults to False.
+        do_own_fit (bool, optional): Do own fit (not RM-Tools). Defaults to False.
+
+    Returns:
+        pymongo.UpdateOne: MongoDB update operation
     """
     logger.setLevel(logging.INFO)
     save_name = field if sbid is None else f"{field}_{sbid}"
     comp = comp_tuple[1]
     beam = dict(beam_tuple[1])
 
-    iname = comp["Source_ID"]
-    cname = comp["Gaussian_ID"]
-    ra = comp["RA"]
-    dec = comp["Dec"]
+    iname = str(comp["Source_ID"])
+    cname = str(comp["Gaussian_ID"])
+    ra = float(comp["RA"])
+    dec = float(comp["Dec"])
     coord = SkyCoord(ra * u.deg, dec * u.deg)
     field_dict = beam["beams"][field]
 
@@ -551,7 +582,7 @@ def rmsynthoncut1d(
             operation = {"$set": {"rm_outputs_1d.$.rmsynth1d": False}}
             return pymongo.UpdateOne(myquery, operation, upsert=True)
 
-    prefix = f"{os.path.dirname(stokes_spectra.i.filename)}/{cname}"
+    prefix = stokes_spectra.i.filename.parent / cname
 
     # Filter by RMS for outlier rejection
     filtered_stokes_spectra = sigma_clip_spectra(stokes_spectra)
@@ -592,8 +623,8 @@ def rmsynthoncut1d(
         data.append(filtered_stokes_spectra.__getattribute__(stokes).rms)
 
     # Run 1D RM-synthesis on the spectra
-    np.savetxt(f"{prefix}.dat", np.vstack(data).T, delimiter=" ")
-    np.savetxt(f"{prefix}_bkg.dat", np.vstack(bkg_data).T, delimiter=" ")
+    np.savetxt(f"{prefix.as_posix()}.dat", np.vstack(data).T, delimiter=" ")
+    np.savetxt(f"{prefix.as_posix()}_bkg.dat", np.vstack(bkg_data).T, delimiter=" ")
 
     try:
         logger.info(f"Using {fit_function} to fit Stokes I")
@@ -613,7 +644,7 @@ def rmsynthoncut1d(
             verbose=rm_verbose,
             debug=debug,
             fit_function=fit_function,
-            prefixOut=prefix,
+            prefixOut=prefix.as_posix(),
         )
     except Exception as err:
         traceback.print_tb(err.__traceback__)
@@ -661,39 +692,35 @@ def rmsynthoncut1d(
 
     # Ensure JSON serializable
     for k, v in mDict.items():
-        if isinstance(v, np.float_):
+        if isinstance(v, np.float64 | np.float32):
             mDict[k] = float(v)
-        elif isinstance(v, np.float32):
-            mDict[k] = float(v)
-        elif isinstance(v, np.int_):
-            mDict[k] = int(v)
-        elif isinstance(v, np.int32):
+        elif isinstance(v, np.int_ | np.int32):
             mDict[k] = int(v)
         elif isinstance(v, np.ndarray):
             mDict[k] = v.tolist()
         elif isinstance(v, np.bool_):
             mDict[k] = bool(v)
 
-    do_RMsynth_1D.saveOutput(mDict, aDict, prefix, rm_verbose)
+    do_RMsynth_1D.saveOutput(mDict, aDict, prefix.as_posix(), rm_verbose)
 
     myquery = {"Gaussian_ID": cname}
 
     # Prep header
     head_dict = dict(filtered_stokes_spectra.i.header)
     head_dict.pop("", None)
-    if "COMMENT" in head_dict.keys():
+    if "COMMENT" in head_dict:
         head_dict["COMMENT"] = str(head_dict["COMMENT"])
     logger.debug(f"Heading for {cname} is {pformat(head_dict)}")
 
-    outer_dir = os.path.basename(os.path.dirname(filtered_stokes_spectra.i.filename))
+    outer_dir = Path(filtered_stokes_spectra.i.filename.parent.name)
     newvalues = {
         "field": save_name,
         "rm1dfiles": {
-            "FDF_dirty": os.path.join(outer_dir, f"{cname}_FDFdirty.dat"),
-            "RMSF": os.path.join(outer_dir, f"{cname}_RMSF.dat"),
-            "weights": os.path.join(outer_dir, f"{cname}_weight.dat"),
-            "summary_dat": os.path.join(outer_dir, f"{cname}_RMsynth.dat"),
-            "summary_json": os.path.join(outer_dir, f"{cname}_RMsynth.json"),
+            "FDF_dirty": (outer_dir / f"{cname}_FDFdirty.dat").as_posix(),
+            "RMSF": (outer_dir / f"{cname}_RMSF.dat").as_posix(),
+            "weights": (outer_dir / f"{cname}_weight.dat").as_posix(),
+            "summary_dat": (outer_dir / f"{cname}_RMsynth.dat").as_posix(),
+            "summary_json": (outer_dir / f"{cname}_RMsynth.json").as_posix(),
         },
         "rmsynth1d": True,
         "header": head_dict,
@@ -747,18 +774,17 @@ def main(
     outdir: Path,
     host: str,
     epoch: int,
-    sbid: Optional[int] = None,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    sbid: int | None = None,
+    username: str | None = None,
+    password: str | None = None,
     dimension: str = "1d",
-    verbose: bool = True,
     database: bool = False,
-    limit: Union[int, None] = None,
+    limit: int | None = None,
     savePlots: bool = False,
     weightType: str = "variance",
     fitRMSF: bool = True,
-    phiMax_radm2: Union[float, None] = None,
-    dPhi_radm2: Union[float, None] = None,
+    phiMax_radm2: float | None = None,
+    dPhi_radm2: float | None = None,
     nSamples: int = 5,
     polyOrd: int = 3,
     noStokesI: bool = False,
@@ -767,12 +793,12 @@ def main(
     rm_verbose: bool = False,
     debug: bool = False,
     fit_function: str = "log",
-    tt0: Optional[str] = None,
-    tt1: Optional[str] = None,
+    tt0: str | None = None,
+    tt1: str | None = None,
     ion: bool = False,
     do_own_fit: bool = False,
 ) -> None:
-    """Run RMsynth on cutouts flow
+    """Run RMsynth on cutouts flow.
 
     Args:
         field (str): RACS field
@@ -830,7 +856,8 @@ def main(
             field_col=field_col,
         )
         if not sbid_check:
-            raise ValueError(f"SBID {sbid} does not match field {field}")
+            msg = f"SBID {sbid} does not match field {field}"
+            raise ValueError(msg)
 
     beam_query = {"$and": [{f"beams.{field}": {"$exists": True}}]}
 
@@ -840,7 +867,7 @@ def main(
     logger.info(f"Querying beams with {beam_query}")
 
     beams = pd.DataFrame(list(beams_col.find(beam_query).sort("Source_ID")))
-    beams.set_index("Source_ID", drop=False, inplace=True)
+    beams = beams.set_index("Source_ID", drop=False)
     island_ids = sorted(beams_col.distinct("Source_ID", beam_query))
 
     isl_query = {"Source_ID": {"$in": island_ids}}
@@ -858,7 +885,7 @@ def main(
             ).sort("Source_ID")
         )
     )
-    components.set_index("Source_ID", drop=False, inplace=True)
+    components = components.set_index("Source_ID", drop=False)
     component_ids = list(components["Gaussian_ID"])
 
     n_comp = comp_col.count_documents(isl_query)
@@ -971,7 +998,11 @@ def main(
         logger.info(f"Running RMsynth on {n_comp} components")
         outputs = []
         for comp_tuple, beam_tuple in tqdm(
-            zip(components.iterrows(), beams.loc[components.Source_ID].iterrows()),
+            zip(
+                components.iterrows(),
+                beams.loc[components.Source_ID].iterrows(),
+                strict=False,
+            ),
             total=n_comp,
             desc="Submitting RMsynth 1D jobs",
             file=TQDM_OUT,
@@ -1006,7 +1037,7 @@ def main(
         logger.info(f"Running RMsynth on {n_island} islands")
         outputs = []
         for island_id, beam_tuple in tqdm(
-            zip(island_ids, beams.loc[island_ids].iterrows()),
+            zip(island_ids, beams.loc[island_ids].iterrows(), strict=False),
             total=n_island,
             desc="Submitting RMsynth 3D jobs",
             file=TQDM_OUT,
@@ -1029,7 +1060,8 @@ def main(
             )
             outputs.append(output)
     else:
-        raise ValueError("An incorrect RMSynth mode has been configured. ")
+        msg = "An incorrect RMSynth mode has been configured. "
+        raise ValueError(msg)
 
     if database:
         logger.info("Updating database...")
@@ -1045,6 +1077,14 @@ def main(
 
 
 def rm_common_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create an argument parser for common RM-synthesis arguments.
+
+    Args:
+        parent_parser (bool, optional): If a parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The argument parser
+    """
     common_parser = argparse.ArgumentParser(
         formatter_class=UltimateHelpFormatter,
         add_help=not parent_parser,
@@ -1066,6 +1106,14 @@ def rm_common_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def rmsynth_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create an argument parser for RM-synthesis.
+
+    Args:
+        parent_parser (bool, optional): If a parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The argument parser
+    """
     # Help string to be shown using the -h option
     descStr = f"""
     {logo_str}
@@ -1169,8 +1217,7 @@ def rmsynth_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def cli():
-    """Command-line interface"""
-
+    """Command-line interface."""
     from astropy.utils.exceptions import AstropyWarning
 
     warnings.simplefilter("ignore", category=AstropyWarning)

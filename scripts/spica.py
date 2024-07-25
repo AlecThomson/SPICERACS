@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import shlex
 import subprocess as sb
@@ -6,10 +8,9 @@ from pathlib import Path
 
 import copy_data
 import numpy as np
-from astropy.table import Table
-
 from arrakis.logger import logger, logging
 from arrakis.utils.io import try_mkdir
+from astropy.table import Table
 
 logger.setLevel(logging.INFO)
 
@@ -57,9 +58,8 @@ def mslist(cal_sb, name):
         ms = glob(f"{racs_area}/{cal_sb}/RACS_test4_1.05_{name}/*beam00_*.ms")[0]
     except Exception as e:
         logger.error(e)
-        raise Exception(
-            f"Can't find '{racs_area}/{cal_sb}/RACS_test4_1.05_{name}/*beam00_*.ms'"
-        )
+        msg = f"Can't find '{racs_area}/{cal_sb}/RACS_test4_1.05_{name}/*beam00_*.ms'"
+        raise Exception(msg)
 
     mslist_out = sb.run(
         shlex.split(f"mslist --full {ms}"), capture_output=True, check=False
@@ -72,8 +72,7 @@ def mslist(cal_sb, name):
         shlex.split("date +%Y-%m-%d-%H%M%S"), capture_output=True, check=True
     )
 
-    out = mslist_out.stderr.decode() + f"METADATA_IS_GOOD {date_out.stdout.decode()}"
-    return out
+    return mslist_out.stderr.decode() + f"METADATA_IS_GOOD {date_out.stdout.decode()}"
 
 
 def main(
@@ -107,7 +106,7 @@ def main(
         cal_files = glob(
             f"{racs_area}/{cal_sbid}/RACS_test4_1.05_{name}/*averaged_cal.leakage.ms"
         )
-        leak = not len(cal_files) == 0
+        leak = len(cal_files) != 0
         cubes = []
         for stoke in ["i", "q", "u"]:
             cubes.extend(

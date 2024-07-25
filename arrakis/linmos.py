@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Run LINMOS on cutouts in parallel"""
+"""Run LINMOS on cutouts in parallel."""
+
+from __future__ import annotations
 
 import argparse
 import logging
 import os
 import shlex
 import warnings
-from glob import glob
 from pathlib import Path
 from pprint import pformat
-from typing import Dict, List
 from typing import NamedTuple as Struct
-from typing import Optional, Tuple
 
 import astropy.units as u
 import numpy as np
@@ -40,26 +39,26 @@ TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
 
 class ImagePaths(Struct):
-    """Class to hold image paths"""
+    """Class to hold image paths."""
 
-    images: List[Path]
+    images: list[Path]
     """List of image paths"""
-    weights: List[Path]
+    weights: list[Path]
     """List of weight paths"""
 
 
 @task(name="Find images")
 def find_images(
     field: str,
-    beams_row: Tuple[int, pd.Series],
+    beams_row: tuple[int, pd.Series],
     stoke: str,
     datadir: Path,
 ) -> ImagePaths:
-    """Find the images and weights for a given field and stokes parameter
+    """Find the images and weights for a given field and stokes parameter.
 
     Args:
         field (str): Field name.
-        beams (dict): Beam information.
+        beams_row (tuple[int, pd.Series]): Row from beams collection.
         stoke (str): Stokes parameter.
         datadir (Path): Data directory.
 
@@ -75,7 +74,7 @@ def find_images(
     field_beams = beams.beams[field]
 
     # First check that the images exist
-    image_list: List[Path] = []
+    image_list: list[Path] = []
     for bm in list(set(field_beams["beam_list"])):  # Ensure list of beams is unique!
         imfile = Path(field_beams[f"{stoke.lower()}_beam{bm}_image_file"])
         assert (
@@ -86,9 +85,10 @@ def find_images(
     image_list = sorted(image_list)
 
     if len(image_list) == 0:
-        raise Exception("No files found. Have you run imaging? Check your prefix?")
+        msg = "No files found. Have you run imaging? Check your prefix?"
+        raise Exception(msg)
 
-    weight_list: List[Path] = []
+    weight_list: list[Path] = []
     for bm in list(set(field_beams["beam_list"])):  # Ensure list of beams is unique!
         wgtsfile = Path(field_beams[f"{stoke.lower()}_beam{bm}_weight_file"])
         assert (
@@ -100,7 +100,7 @@ def find_images(
 
     assert len(image_list) == len(weight_list), "Unequal number of weights and images"
 
-    for im, wt in zip(image_list, weight_list):
+    for im, wt in zip(image_list, weight_list, strict=False):
         assert (
             im.parent.name == wt.parent.name
         ), "Image and weight are in different areas!"
@@ -110,19 +110,19 @@ def find_images(
 
 @task(name="Smooth images")
 def smooth_images(
-    image_dict: Dict[str, ImagePaths],
-) -> Dict[str, ImagePaths]:
-    """Smooth cubelets to a common resolution
+    image_dict: dict[str, ImagePaths],
+) -> dict[str, ImagePaths]:
+    """Smooth cubelets to a common resolution.
 
     Args:
-        image_list (ImagePaths): List of cubelets to smooth.
+        image_dict (dict[str, ImagePaths]): Cubelets to smooth.
 
     Returns:
         ImagePaths: Smoothed cubelets.
     """
-    smooth_dict: Dict[str, ImagePaths] = {}
+    smooth_dict: dict[str, ImagePaths] = {}
     for stoke, image_list in image_dict.items():
-        infiles: List[str] = []
+        infiles: list[str] = []
         for im in image_list.images:
             if im.suffix == ".fits":
                 infiles.append(im.resolve().as_posix())
@@ -133,8 +133,8 @@ def smooth_images(
             conv_mode="robust",
             suffix="cres",
         )
-        smooth_files: List[Path] = []
-        for key, val in datadict.items():
+        smooth_files: list[Path] = []
+        for _key, val in datadict.items():
             smooth_files.append(Path(val["outfile"]))
         smooth_dict[stoke] = ImagePaths(smooth_files, image_list.weights)
 
@@ -146,9 +146,9 @@ def genparset(
     image_paths: ImagePaths,
     stoke: str,
     datadir: Path,
-    holofile: Optional[Path] = None,
-) -> str:
-    """Generate parset for LINMOS
+    holofile: Path | None = None,
+) -> Path:
+    """Generate parset for LINMOS.
 
     Args:
         image_paths (ImagePaths): List of images and weights.
@@ -160,11 +160,11 @@ def genparset(
         Exception: If no files are found.
 
     Returns:
-        str: Path to parset file.
+        Path: Path to parset file.
     """
     logger.setLevel(logging.INFO)
 
-    pol_angles_list: List[float] = []
+    pol_angles_list: list[float] = []
     for im in image_paths.images:
         _pol_angle: float = fits.getheader(im)["INSTRUMENT_RECEPTOR_ANGLE"]
         pol_angles_list.append(_pol_angle)
@@ -190,7 +190,7 @@ def genparset(
     linmos_image_str = f"{first_image[:first_image.find('beam')]}linmos"
     linmos_weight_str = f"{first_weight[:first_weight.find('beam')]}linmos"
 
-    parset_file = os.path.join(parset_dir, f"linmos_{stoke}.in")
+    parset_file = parset_dir / f"linmos_{stoke}.in"
     parset = f"""linmos.names            = {image_string}
 linmos.weights          = {weight_string}
 linmos.imagetype        = fits
@@ -214,7 +214,7 @@ linmos.removeleakage    = true
     else:
         logger.warning("No holography file provided - not correcting leakage!")
 
-    with open(parset_file, "w") as f:
+    with parset_file.open("w") as f:
         f.write(parset)
 
     return parset_file
@@ -222,9 +222,9 @@ linmos.removeleakage    = true
 
 @task(name="Run linmos")
 def linmos(
-    parset: Optional[str], fieldname: str, image: str, holofile: Path
-) -> Optional[pymongo.UpdateOne]:
-    """Run linmos
+    parset: Path | None, fieldname: str, image: Path, holofile: Path
+) -> pymongo.UpdateOne | None:
+    """Run linmos.
 
     Args:
         parset (str): Path to parset file.
@@ -243,52 +243,60 @@ def linmos(
     logger.setLevel(logging.INFO)
 
     if parset is None:
-        return
+        return None
 
-    workdir = os.path.dirname(parset)
-    rootdir = os.path.split(workdir)[0]
-    parset_name = os.path.basename(parset)
-    source = os.path.basename(workdir)
+    # Yes this a bit overly complicated parsing of the file paths
+    # But I want to be sure that the paths are correct
+    # And I am but a grug
+    workdir = parset.parent
+    rootdir = workdir.parent
+    parset_name = parset.name
+    source = workdir.name
     stoke = parset_name[parset_name.find(".in") - 1]
-    log_file = parset.replace(".in", ".log")
-    linmos_command = shlex.split(f"linmos -c {parset}")
+    log_file = parset.with_suffix(".log")
+    linmos_command = shlex.split(f"linmos -c {parset.as_posix()}")
 
     holo_folder = holofile.parent
 
     output = sclient.execute(
-        image=image,
+        image=image.as_posix(),
         command=linmos_command,
-        bind=f"{rootdir}:{rootdir},{holo_folder}:{holo_folder}",
+        bind=f"{rootdir.as_posix()}:{rootdir.as_posix()},{holo_folder.as_posix()}:{holo_folder.as_posix()}",
         return_result=True,
         quiet=False,
         stream=True,
     )
-    with open(log_file, "w") as f:
+    with log_file.open("w") as f:
         for line in output:
             # We could log this, but it's a lot of output
             # We seem to be DDoS'ing the Prefect server
             # logger.info(line)
             f.write(line)
 
-    new_files = glob(f"{workdir}/*.cutout.image.restored.{stoke.lower()}*.linmos.fits")
+    new_files = list(
+        workdir.glob(f"*.cutout.image.restored.{stoke.lower()}*.linmos.fits")
+    )
 
     if len(new_files) != 1:
-        raise Exception(f"LINMOS file not found! -- check {log_file}?")
+        msg = f"LINMOS file not found! -- check {log_file}?"
+        raise FileNotFoundError(msg)
 
-    new_file = os.path.abspath(new_files[0])
-    outer = os.path.basename(os.path.dirname(new_file))
-    inner = os.path.basename(new_file)
-    new_file = os.path.join(outer, inner)
+    new_file = new_files[0].absolute()
+    outer = Path(new_file.parent.name)
+    inner = new_file.name
+    new_file = outer / inner
 
-    logger.info(f"Cube now in {workdir}/{inner}")
+    logger.info(f"Cube now in {(workdir/inner).as_posix()}")
 
     query = {"Source_ID": source}
-    newvalues = {"$set": {f"beams.{fieldname}.{stoke.lower()}_file": new_file}}
+    newvalues = {
+        "$set": {f"beams.{fieldname}.{stoke.lower()}_file": new_file.as_posix()}
+    }
 
     return pymongo.UpdateOne(query, newvalues)
 
 
-def get_yanda(version="1.3.0") -> str:
+def get_yanda(version="1.3.0") -> Path:
     """Pull yandasoft image from dockerhub.
 
     Args:
@@ -298,8 +306,7 @@ def get_yanda(version="1.3.0") -> str:
         str: Path to yandasoft image.
     """
     sclient.load(f"docker://csirocass/yandasoft:{version}-galaxy")
-    image = os.path.abspath(sclient.pull())
-    return image
+    return Path(sclient.pull()).absolute()
 
 
 # We reduce the inner loop to a serial call
@@ -307,12 +314,27 @@ def get_yanda(version="1.3.0") -> str:
 @task(name="LINMOS loop")
 def serial_loop(
     field: str,
-    beams_row: Tuple[int, pd.Series],
-    stokeslist: List[str],
+    beams_row: tuple[int, pd.Series],
+    stokeslist: list[str],
     cutdir: Path,
     holofile: Path,
     image: Path,
-) -> List[Optional[pymongo.UpdateOne]]:
+) -> list[pymongo.UpdateOne | None]:
+    """Serial loop for LINMOS.
+
+    Finds images, generates parsets, and runs LINMOS.
+
+    Args:
+        field (str): Field name.
+        beams_row (tuple[int, pd.Series]): Row from beams collection.
+        stokeslist (list[str]): List of Stokes parameters.
+        cutdir (Path): Cutout directory.
+        holofile (Path): Holography file.
+        image (Path): Path to yandasoft image.
+
+    Returns:
+        list[pymongo.UpdateOne | None]: List of mongo update objects.
+    """
     results = []
     for stoke in stokeslist:
         image_path = find_images.fn(
@@ -330,7 +352,7 @@ def serial_loop(
         result = linmos.fn(
             parset=parset,
             fieldname=field,
-            image=str(image),
+            image=image,
             holofile=holofile,
         )
         results.append(result)
@@ -344,21 +366,23 @@ def main(
     datadir: Path,
     host: str,
     epoch: int,
-    sbid: Optional[int] = None,
-    holofile: Optional[Path] = None,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    sbid: int | None = None,
+    holofile: Path | None = None,
+    username: str | None = None,
+    password: str | None = None,
     yanda: str = "1.3.0",
-    yanda_img: Optional[Path] = None,
-    stokeslist: Optional[List[str]] = None,
-    limit: Optional[int] = None,
+    yanda_img: Path | None = None,
+    stokeslist: list[str] | None = None,
+    limit: int | None = None,
 ) -> None:
-    """LINMOS flow
+    """LINMOS flow.
 
     Args:
         field (str): RACS field name.
         datadir (str): Data directory.
         host (str): MongoDB host IP.
+        epoch (int): Epoch.
+        sbid (int, optional): SBID. Defaults to None.
         holofile (str): Path to primary beam file.
         username (str, optional): Mongo username. Defaults to None.
         password (str, optional): Mongo password. Defaults to None.
@@ -388,7 +412,7 @@ def main(
 
     logger.info(f"The query is {query=}")
 
-    island_ids: List[str] = sorted(beams_col.distinct("Source_ID", query))
+    island_ids: list[str] = sorted(beams_col.distinct("Source_ID", query))
     big_beams = pd.DataFrame(
         beams_col.find({"Source_ID": {"$in": island_ids}}).sort("Source_ID")
     )
@@ -416,7 +440,7 @@ def main(
         )
         results.append(sub_results)
 
-    updates_lists: List[list] = [f.result() for f in results]
+    updates_lists: list[list] = [f.result() for f in results]
     # Flatten
     updates = [u for ul in updates_lists for u in ul]
     updates = [u for u in updates if u is not None]
@@ -428,6 +452,14 @@ def main(
 
 
 def linmos_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create the linmos parser.
+
+    Args:
+        parent_parser (bool, optional): If a parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The parser.
+    """
     # Help string to be shown using the -h option
     descStr = f"""
     {logo_str}
@@ -445,7 +477,7 @@ def linmos_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
     parser = linmos_parser.add_argument_group("linmos arguments")
 
     parser.add_argument(
-        "--holofile", type=str, default=None, help="Path to holography image"
+        "--holofile", type=Path, default=None, help="Path to holography image"
     )
     parser.add_argument(
         "--yanda",
@@ -463,8 +495,7 @@ def linmos_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def cli():
-    """Command-line interface"""
-
+    """Command-line interface."""
     gen_parser = generic_parser(parent_parser=True)
     work_parser = workdir_arg_parser(parent_parser=True)
     lin_parser = linmos_parser(parent_parser=True)

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Make an Arrakis catalogue"""
+"""Make an Arrakis catalogue."""
+
+from __future__ import annotations
 
 import argparse
 import logging
-import os
 import time
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 from pprint import pformat
-from typing import Callable, NamedTuple, Optional, Tuple, Union
 
 import astropy.units as u
 import dask.dataframe as dd
@@ -42,22 +43,32 @@ from arrakis.utils.pipeline import (
     upload_image_as_artifact_task,
 )
 from arrakis.utils.plotting import latexify
-from arrakis.utils.typing import ArrayLike, TableLike
+from arrakis.utils.typing import ArrayLike, Struct, TableLike
 
 logger.setLevel(logging.INFO)
 
 TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
 
-class SpectralIndices(NamedTuple):
+class SpectralIndices(Struct):
+    """Specral indices.
+
+    Attributes:
+        alphas (np.ndarray): Alpha values
+        alphas_err (np.ndarray): Alpha errors
+        betas (np.ndarray): Beta values
+        betas_err (np.ndarray): Beta
+
+    """
+
     alphas: np.ndarray
     alphas_err: np.ndarray
     betas: np.ndarray
     betas_err: np.ndarray
 
 
-def combinate(data: ArrayLike) -> Tuple[ArrayLike, ArrayLike]:
-    """Return all combinations of data with itself
+def combinate(data: ArrayLike) -> tuple[ArrayLike, ArrayLike]:
+    """Return all combinations of data with itself.
 
     Args:
         data (ArrayLike): Data to combine.
@@ -82,8 +93,7 @@ def flag_blended_components(cat: TableLike) -> TableLike:
     """
 
     def is_blended_component(sub_df: pd.DataFrame) -> pd.DataFrame:
-        """Return a boolean series indicating whether a component is the maximum
-        component in a source.
+        """Return a boolean series indicating whether a component is the maximum component in a source.
 
         Args:
             sub_df (pd.DataFrame): DataFrame containing all components for a source
@@ -156,7 +166,7 @@ def flag_blended_components(cat: TableLike) -> TableLike:
                 name="blend_ratio",
                 dtype=float,
             )
-        df = pd.DataFrame(
+        return pd.DataFrame(
             {
                 "is_blended_flag": is_blended,
                 "N_blended": n_blended,
@@ -165,11 +175,9 @@ def flag_blended_components(cat: TableLike) -> TableLike:
             index=sub_df.index,
         )
 
-        return df
-
-    df = cat.to_pandas()
-    df.set_index("cat_id", inplace=True)
-    ddf = dd.from_pandas(df, chunksize=1000)
+    cat_df = cat.to_pandas()
+    cat_df = cat_df.set_index("cat_id")
+    ddf = dd.from_pandas(cat_df, chunksize=1000)
     grp = ddf.groupby("source_id")
     logger.info("Identifying blended components...")
     with ProgressBar():
@@ -225,11 +233,22 @@ def flag_blended_components(cat: TableLike) -> TableLike:
     return cat
 
 
-def lognorm_from_percentiles(x1, p1, x2, p2):
-    """Return a log-normal distribuion X parametrized by:
+def lognorm_from_percentiles[T](x1: T, p1: T, x2: T, p2: T) -> tuple[T, T]:
+    """Return a log-normal distribuion 'X' based on percentiles.
+
+    Parametrized by:
 
     P(X < p1) = x1
     P(X < p2) = x2
+
+    Args:
+        x1 (T): Value at p1
+        p1 (T): Percentile 1
+        x2 (T): Value at p2
+        p2 (T): Percentile 2
+
+    Returns:
+        tuple[T, T]: Scale and mean of the log-normal distribution
     """
     x1 = np.log(x1)
     x2 = np.log(x2)
@@ -243,7 +262,15 @@ def lognorm_from_percentiles(x1, p1, x2, p2):
 
 
 @task(name="Fix sigma_add")
-def sigma_add_fix(tab: TableLike) -> TableLike:
+def sigma_add_fix[TableLike](tab: TableLike) -> TableLike:
+    """Fix sigma_add values.
+
+    Args:
+        tab (TableLike): Table with sigma_add values
+
+    Returns:
+        TableLike: Fixed table
+    """
     sigma_Q_low = np.array(tab["sigma_add_Q"] - tab["sigma_add_Q_err_minus"])
     sigma_Q_high = np.array(tab["sigma_add_Q"] + tab["sigma_add_Q_err_plus"])
 
@@ -260,7 +287,7 @@ def sigma_add_fix(tab: TableLike) -> TableLike:
 
     med, std = np.zeros_like(s_Q), np.zeros_like(s_Q)
     for i, (_s_Q, _scale_Q, _s_U, _scale_U) in tqdm(
-        enumerate(zip(s_Q, scale_Q, s_U, scale_U)),
+        enumerate(zip(s_Q, scale_Q, s_U, scale_U, strict=False)),
         total=len(s_Q),
         desc="Calculating sigma_add",
         file=TQDM_OUT,
@@ -297,7 +324,7 @@ def sigma_add_fix(tab: TableLike) -> TableLike:
 
 
 def is_leakage(frac: float, sep: float, fit: Callable) -> bool:
-    """Determine if a source is leakage
+    """Determine if a source is leakage.
 
     Args:
         frac (float): Polarised fraction
@@ -318,17 +345,20 @@ def get_fit_func(
     degree: int = 2,
     do_plot: bool = False,
     high_snr_cut: float = 30.0,
-) -> Tuple[Callable, plt.Figure]:
-    """Fit an envelope to define leakage sources
+) -> tuple[Callable, plt.Figure]:
+    """Fit an envelope to define leakage sources.
 
     Args:
         tab (TableLike): Catalogue to fit
         nbins (int, optional): Number of bins along seperation axis. Defaults to 21.
+        offset (float, optional): Offset for fit. Defaults to 0.002.
+        degree (int, optional): Degree of polynomial fit. Defaults to 2.
+        do_plot (bool, optional): Plot the fit. Defaults to False.
+        high_snr_cut (float, optional): SNR cut for high SNR sources. Defaults to 30.0.
 
     Returns:
         Callable: 3rd order polynomial fit.
     """
-
     logger.info(f"Using {high_snr_cut=}.")
 
     # Select high SNR sources
@@ -410,7 +440,7 @@ def get_fit_func(
         rasterized=True,
     )
     plt.plot(bins_c, meds, alpha=1, c=color, label="Median", linewidth=2)
-    for s, ls in zip((1, 2), ("--", ":")):
+    for s, ls in zip((1, 2), ("--", ":"), strict=False):
         for r in ("ups", "los"):
             plt.plot(
                 bins_c,
@@ -432,7 +462,7 @@ def get_fit_func(
 
 
 def compute_local_rm_flag(good_cat: Table, big_cat: Table) -> Table:
-    """Compute the local RM flag
+    """Compute the local RM flag.
 
     Args:
         good_cat (Table): Table with just good RMs
@@ -444,18 +474,20 @@ def compute_local_rm_flag(good_cat: Table, big_cat: Table) -> Table:
     logger.info("Computing voronoi bins and finding bad RMs")
     logger.info(f"Number of available sources: {len(good_cat)}.")
 
-    df = good_cat.to_pandas()
-    df.reset_index(inplace=True)
-    df.set_index("cat_id", inplace=True)
+    good_cat_df = good_cat.to_pandas()
+    good_cat_df = good_cat_df.reset_index()
+    good_cat_df = good_cat_df.set_index("cat_id")
 
     df_out = big_cat.to_pandas()
-    df_out.reset_index(inplace=True)
-    df_out.set_index("cat_id", inplace=True)
+    df_out = df_out.reset_index()
+    df_out = df_out.set_index("cat_id")
     df_out["local_rm_flag"] = False
 
     try:
 
         def sn_func(index, signal=None, noise=None):
+            # Signal and noise are not used, but required by voronoi_2d_binning
+            _, _ = signal, noise
             try:
                 sn = len(np.array(index))
             except TypeError:
@@ -498,11 +530,10 @@ def compute_local_rm_flag(good_cat: Table, big_cat: Table) -> Table:
                 )
                 if num_of_bins >= target_bins:
                     break
-                else:
-                    logger.info(
-                        f"Found {num_of_bins} bins, targeting minimum {target_bins}"
-                    )
-                    target_sn -= 5
+                logger.info(
+                    f"Found {num_of_bins} bins, targeting minimum {target_bins}"
+                )
+                target_sn -= 5
             except ValueError as e:
                 if "Not enough S/N in the whole set of pixels." not in str(e):
                     raise e
@@ -518,7 +549,7 @@ def compute_local_rm_flag(good_cat: Table, big_cat: Table) -> Table:
 
         if not fail:
             logger.info(f"Found {len(set(bin_number))} bins")
-            df["bin_number"] = bin_number
+            good_cat_df["bin_number"] = bin_number
 
             # Use sigma clipping to find outliers
             def masker(x):
@@ -527,13 +558,13 @@ def compute_local_rm_flag(good_cat: Table, big_cat: Table) -> Table:
                     index=x.index,
                 )
 
-            perc_g = df.groupby("bin_number").apply(
+            perc_g = good_cat_df.groupby("bin_number").apply(
                 masker,
             )
             # Put flag into the catalogue
-            df["local_rm_flag"] = perc_g.reset_index().set_index("cat_id")[0]
-            df.drop(columns=["bin_number"], inplace=True)
-            df_out.update(df["local_rm_flag"])
+            good_cat_df["local_rm_flag"] = perc_g.reset_index().set_index("cat_id")[0]
+            good_cat_df = good_cat_df.drop(columns=["bin_number"])
+            df_out.update(good_cat_df["local_rm_flag"])
 
     except Exception as e:
         logger.error(f"Failed to compute local RM flag: {e}")
@@ -557,18 +588,25 @@ def compute_local_rm_flag(good_cat: Table, big_cat: Table) -> Table:
 
 
 @task(name="Add cuts and flags")
-def cuts_and_flags(
+def cuts_and_flags[TableLike](
     cat: TableLike,
     leakage_degree: int = 4,
     leakage_bins: int = 16,
     leakage_snr: float = 30.0,
 ) -> TableLike:
-    """Cut out bad sources, and add flag columns
+    """Cut out bad sources, and add flag columns.
 
     A flag of 'True' means the source is bad.
 
     Args:
-        cat (rmt): Catalogue to cut and flag
+        cat (TableLike): Catalogue to cut and flag
+        leakage_degree (int, optional): Degree of leakage fit. Defaults to 4.
+        leakage_bins (int, optional): Number of bins for leakage fit. Defaults to 16.
+        leakage_snr (float, optional): SNR cut for leakage fit. Defaults to 30.0.
+
+    Returns:
+        TableLike: Catalogue with cuts and flags
+
     """
     # SNR flag
     snr_flag = cat["snr_polint"] < 8
@@ -630,13 +668,21 @@ def cuts_and_flags(
 
 @task(name="Get spectral indices")
 def get_alpha(cat: TableLike) -> SpectralIndices:
+    """Get spectral indices from a catalogue.
+
+    Args:
+        cat (TableLike): Catalogue
+
+    Returns:
+        SpectralIndices: _description_
+    """
     coefs_str = cat["stokesI_model_coef"]
     coefs_err_str = cat["stokesI_model_coef_err"]
     alphas = []
     alphas_err = []
     betas = []
     betas_err = []
-    for c, c_err in zip(coefs_str, coefs_err_str):
+    for c, c_err in zip(coefs_str, coefs_err_str, strict=False):
         coefs = c.split(",")
         coefs_err = c_err.split(",")
         # alpha is the 2nd last coefficient
@@ -659,8 +705,21 @@ def get_alpha(cat: TableLike) -> SpectralIndices:
 
 @task(name="Get integration times")
 def get_integration_time(
-    cat: RMTable, field_col: Collection, sbid: Optional[int] = None
-):
+    cat: RMTable, field_col: Collection, sbid: int | None = None
+) -> u.Quantity:
+    """Get the integration times for a given catalogue.
+
+    Args:
+        cat (RMTable): RM catalogue
+        field_col (Collection): Field collection
+        sbid (int | None, optional): SBID. Defaults to None.
+
+    Raises:
+        ValueError: If no data is found for the given query.
+
+    Returns:
+        u.Quantity: Integration times
+    """
     logger.warning("Will be stripping the trailing field character prefix. ")
     field_names = [
         name[:-1] if name[-1] in ("A", "B") else name for name in list(cat["tile_id"])
@@ -692,13 +751,14 @@ def get_integration_time(
         doc_count = field_col.count_documents(query)
 
         if doc_count == 0:
-            raise ValueError(f"No data for query {query}")
-        else:
-            logger.warning("Using SELECT=0 instead.")
+            msg = f"No data for query {query}"
+            raise ValueError(msg)
+
+        logger.warning("Using SELECT=0 instead.")
 
     field_data = list(field_col.find(query, reutrn_vals))
     tint_df = pd.DataFrame(field_data)
-    tint_df.set_index("FIELD_NAME", inplace=True, drop=False)
+    tint_df = tint_df.set_index("FIELD_NAME", drop=False)
 
     # Check for duplicates
     if len(tint_df.index) != len(set(tint_df.index)):
@@ -709,7 +769,7 @@ def get_integration_time(
 
     logger.debug(f"Returned results: {tint_df=}")
 
-    tints = tint_df.loc[field_names]["SCAN_TINT"].values * u.s
+    tints: u.Quantity = tint_df.loc[field_names]["SCAN_TINT"].to_numpy() * u.s
 
     assert len(tints) == len(field_names), "Mismatch in number of integration times"
     assert len(tints) == len(cat), "Mismatch in number of integration times and sources"
@@ -717,11 +777,12 @@ def get_integration_time(
     return tints
 
 
-def add_metadata(vo_table: VOTableFile, filename: str):
-    """Add metadata to VO Table for CASDA
+def add_metadata(vo_table: VOTableFile, filename: Path):
+    """Add metadata to VO Table for CASDA.
 
     Args:
         vo_table (vot): VO Table object
+        filename (Path): Output file name
 
     Returns:
         vot: VO Table object with metadata
@@ -741,10 +802,7 @@ def add_metadata(vo_table: VOTableFile, filename: str):
     if len(vo_table.params) > 0:
         logger.warning(f"{filename} already has params - not adding")
         return vo_table
-    _, ext = os.path.splitext(filename)
-    cat_name = (
-        os.path.basename(filename).replace(ext, "").replace(".", "_").replace("-", "_")
-    )
+    cat_name = filename.stem.replace(".", "_").replace("-", "_")
     idx_fields = "ra,dec,cat_id,source_id"
     pri_fields = (
         "ra,dec,cat_id,source_id,rm,polint,snr_polint,fracpol,stokesI,sigma_add"
@@ -777,22 +835,8 @@ def add_metadata(vo_table: VOTableFile, filename: str):
     return vo_table
 
 
-def replace_nans(filename: str):
-    """Replace NaNs in a XML table with a string
-
-    Args:
-        filename (str): File name
-    """
-    pass
-    # with open(filename, "r") as f:
-    #     xml = f.read()
-    # xml = xml.replace("NaN", "null")
-    # with open(filename, "w") as f:
-    #     f.write(xml)
-
-
 def fix_blank_units(rmtab: TableLike) -> TableLike:
-    """Fix blank units in table
+    """Fix blank units in table.
 
     Args:
         rmtab (TableLike): TableLike
@@ -810,7 +854,13 @@ def fix_blank_units(rmtab: TableLike) -> TableLike:
 
 
 @task(name="Write votable")
-def write_votable(rmtab: TableLike, outfile: str) -> None:
+def write_votable(rmtab: TableLike, outfile: Path) -> None:
+    """Write a table to a VO Table.
+
+    Args:
+        rmtab (TableLike): RM Table
+        outfile (Path): Ouput file name
+    """
     # Replace bad column names
     fix_columns = {
         "catalog": "catalog_name",
@@ -826,13 +876,10 @@ def write_votable(rmtab: TableLike, outfile: str) -> None:
     vo_table.version = "1.3"
     vo_table = add_metadata(vo_table, outfile)
     vot.writeto(vo_table, outfile)
-    # Fix NaNs for CASDA
-    replace_nans(outfile)
 
 
 def update_tile_separations(rmtab: TableLike, field_col: Collection) -> TableLike:
-    """
-    Update the tile separations in the catalogue
+    """Update the tile separations in the catalogue.
 
     Args:
         rmtab (TableLike): Table to update
@@ -850,8 +897,8 @@ def update_tile_separations(rmtab: TableLike, field_col: Collection) -> TableLik
             {"FIELD_NAME": {"$in": list(field_names)}},
         )
     )
-    field_data.drop_duplicates(subset=["FIELD_NAME"], inplace=True)
-    field_data.set_index("FIELD_NAME", inplace=True)
+    field_data = field_data.drop_duplicates(subset=["FIELD_NAME"])
+    field_data = field_data.set_index("FIELD_NAME")
 
     field_coords = SkyCoord(
         ra=field_data["RA_DEG"], dec=field_data["DEC_DEG"], unit=(u.deg, u.deg)
@@ -897,20 +944,25 @@ def main(
     field: str,
     host: str,
     epoch: int,
-    sbid: Optional[int] = None,
+    sbid: int | None = None,
     leakage_degree: int = 4,
     leakage_bins: int = 16,
     leakage_snr: float = 30.0,
-    username: Union[str, None] = None,
-    password: Union[str, None] = None,
+    username: str | None = None,
+    password: str | None = None,
     verbose: bool = True,
-    outfile: Union[str, None] = None,
+    outfile: Path | None = None,
 ) -> None:
-    """Make a catalogue from the Arrakis database flow
+    """Make a catalogue from the Arrakis database flow.
 
     Args:
         field (str): RACS field name
         host (str): MongoDB host IP
+        epoch (int): Epoch of the data
+        sbid (int, optional): SBID to use. Defaults to None.
+        leakage_degree (int, optional): Degree of leakage fit. Defaults to 4.
+        leakage_bins (int, optional): Number of bins for leakage fit. Defaults to 16.
+        leakage_snr (float, optional): SNR for leakage fit. Defaults to 30.0.
         username (str, optional): Mongo username. Defaults to None.
         password (str, optional): Mongo password. Defaults to None.
         verbose (bool, optional): Verbose output. Defaults to True.
@@ -936,7 +988,8 @@ def main(
             field_col=field_col,
         )
         if not sbid_check:
-            raise ValueError(f"SBID {sbid} does not match field {field}")
+            msg = f"SBID {sbid} does not match field {field}"
+            raise ValueError(msg)
 
     logger.info("Starting beams collection query")
     tick = time.time()
@@ -1021,7 +1074,7 @@ def main(
     #     subset=["rmclean_summary", "rmsynth_summary", "rmclean1d", "rmsynth1d"],
     #     inplace=True,
     # )
-    comps_df.set_index("Source_ID", inplace=True)
+    comps_df = comps_df.set_index("Source_ID")
     tock = time.time()
     logger.info(f"Finished component collection query - {tock-tick:.2f}s")
     logger.info(f"Found {len(comps_df)} components to catalogue. ")
@@ -1029,17 +1082,18 @@ def main(
     logger.info("Starting island collection query")
     tick = time.time()
     islands_df = pd.DataFrame(island_col.find({"Source_ID": {"$in": all_island_ids}}))
-    islands_df.set_index("Source_ID", inplace=True)
+    islands_df = islands_df.set_index("Source_ID")
     tock = time.time()
     logger.info(f"Finished island collection query - {tock-tick:.2f}s")
 
     if len(comps_df) == 0:
         logger.error("No components found for this field.")
-        raise ValueError("No components found for this field.")
+        msg = "No components found for this field."
+        raise ValueError(msg)
 
     rmtab = RMTable()
     # Add items to main cat using RMtable standard
-    for j, [name, typ, src, col, unit] in enumerate(
+    for _j, [name, typ, src, col, unit] in enumerate(
         tqdm(
             zip(
                 columns_possum.output_cols,
@@ -1047,6 +1101,7 @@ def main(
                 columns_possum.input_sources,
                 columns_possum.input_names,
                 columns_possum.output_units,
+                strict=False,
             ),
             total=len(columns_possum.output_cols),
             desc="Making table by column",
@@ -1078,7 +1133,7 @@ def main(
             rmtab.add_column(new_col)
 
         if src == "synth":
-            for src_id, comp in comps_df.iterrows():
+            for _src_id, comp in comps_df.iterrows():
                 try:
                     data += [comp["rmclean_summary"][col]]
                 except KeyError:
@@ -1087,7 +1142,7 @@ def main(
             rmtab.add_column(new_col)
 
         if src == "header":
-            for src_id, comp in comps_df.iterrows():
+            for _src_id, comp in comps_df.iterrows():
                 data += [comp["header"][col]]
             new_col = Column(data=data, name=name, dtype=typ, unit=unit)
             rmtab.add_column(new_col)
@@ -1096,7 +1151,7 @@ def main(
         columns_possum.sourcefinder_columns, desc="Adding BDSF data", file=TQDM_OUT
     ):
         data = []
-        for src_id, comp in comps_df.iterrows():
+        for _, comp in comps_df.iterrows():
             data += [comp[selcol]]
         new_col = Column(data=data, name=selcol)
         rmtab.add_column(new_col)
@@ -1174,7 +1229,7 @@ def main(
     # Replace all infs with nans
     for col in rmtab.colnames:
         # Check if column is a float
-        if type(rmtab[col][0]) == np.float_:
+        if isinstance(rmtab[col][0], np.float64):
             rmtab[col][np.isinf(rmtab[col])] = np.nan
 
     # Convert all mJy to Jy
@@ -1208,8 +1263,8 @@ def main(
         return
 
     logger.info(f"Writing {outfile} to disk")
-    _, ext = os.path.splitext(outfile)
-    if ext == ".xml" or ext == ".vot":
+    ext = outfile.suffix
+    if ext in (".xml", ".vot"):
         write_votable(rmtab, outfile)
     else:
         rmtab.write(outfile, overwrite=True)
@@ -1219,6 +1274,14 @@ def main(
 
 
 def cat_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Make a catalogue parser.
+
+    Args:
+        parent_parser (bool, optional): If a parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The parser
+    """
     # Help string to be shown using the -h option
     descStr = f"""
     {logo_str}
@@ -1259,7 +1322,7 @@ def cat_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
         "--catfile",
         dest="outfile",
         default=None,
-        type=str,
+        type=Path,
         help="File to save table to.",
     )
 
@@ -1267,7 +1330,7 @@ def cat_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def cli():
-    """Command-line interface"""
+    """Command-line interface."""
     import argparse
 
     from astropy.utils.exceptions import AstropyWarning

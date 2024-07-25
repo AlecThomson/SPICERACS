@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Post process DR1 source catalog"""
 
+from __future__ import annotations
+
 import logging
 import os
 from pathlib import Path
 
 import numpy as np
+from arrakis.logger import TqdmToLogger, logger
+from arrakis.makecat import fix_blank_units, replace_nans, vot
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from tqdm.auto import tqdm
-
-from arrakis.logger import TqdmToLogger, logger
-from arrakis.makecat import fix_blank_units, replace_nans, vot
 
 TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
@@ -28,7 +29,7 @@ def add_metadata(vo_table: vot.tree.Table, table: Table, filename: str):
         vot: VO Table object with metadata
     """
     # Add metadata
-    for col_idx, col_name in enumerate(table.colnames):
+    for _col_idx, col_name in enumerate(table.colnames):
         col = table[col_name]
         vocol = vo_table.get_first_table().get_field_by_id(col_name)
         if hasattr(col, "description"):
@@ -111,8 +112,8 @@ def main(
     field.add_index("FIELD_NAME")
 
     spice_df = spice_cat.to_pandas()
-    spice_df.set_index("source_id", inplace=True)
-    spice_df.sort_index(inplace=True)
+    spice_df = spice_df.set_index("source_id")
+    spice_df = spice_df.sort_index()
     source_cat.sort("Source_ID")
     spice_grp = spice_df.groupby("source_id")
 

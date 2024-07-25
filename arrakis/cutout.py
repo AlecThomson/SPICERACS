@@ -1,5 +1,7 @@
 #!/usr/bin/env python
-"""Produce cutouts from RACS cubes"""
+"""Produce cutouts from RACS cubes."""
+
+from __future__ import annotations
 
 import argparse
 import logging
@@ -8,9 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pprint import pformat
 from shutil import copyfile
-from typing import List
 from typing import NamedTuple as Struct
-from typing import Optional, Set, TypeVar
+from typing import TypeVar
 
 import astropy.units as u
 import numpy as np
@@ -53,7 +54,7 @@ T = TypeVar("T")
 
 
 class CutoutArgs(Struct):
-    """Arguments for cutout function"""
+    """Arguments for cutout function."""
 
     """Name of the source"""
     ra_left: float
@@ -71,12 +72,26 @@ class CutoutArgs(Struct):
 def cutout_weight(
     image_name: Path,
     source_id: str,
-    cutout_args: Optional[CutoutArgs],
+    cutout_args: CutoutArgs | None,
     field: str,
     stoke: str,
     beam_num: int,
     dryrun=False,
 ) -> pymongo.UpdateOne:
+    """Cutout the weight image.
+
+    Args:
+        image_name (Path): Image name
+        source_id (str): Source ID
+        cutout_args (CutoutArgs | None): Cutout arguments
+        field (str): Field name
+        stoke (str): Stokes parameter
+        beam_num (int): Beam number
+        dryrun (bool, optional): If doing a dryrun. Defaults to False.
+
+    Returns:
+        pymongo.UpdateOne: Update query
+    """
     # Update database
     myquery = {"Source_ID": source_id}
 
@@ -119,7 +134,7 @@ def cutout_image(
     old_header: fits.Header,
     cube: SpectralCube,
     source_id: str,
-    cutout_args: Optional[CutoutArgs],
+    cutout_args: CutoutArgs | None,
     field: str,
     beam_num: int,
     stoke: str,
@@ -218,13 +233,12 @@ def get_args(
     comps: pd.DataFrame,
     source: pd.Series,
     outdir: Path,
-) -> Optional[CutoutArgs]:
-    """Get arguments for cutout function
+) -> CutoutArgs | None:
+    """Get arguments for cutout function.
 
     Args:
         comps (pd.DataFrame): List of mongo entries for RACS components in island
-        beam (Dict): Mongo entry for the RACS beam
-        island_id (str): RACS island ID
+        source (pd.Series): Mongo entry for RACS island
         outdir (Path): Input directory
 
     Raises:
@@ -234,7 +248,6 @@ def get_args(
     Returns:
         List[CutoutArgs]: List of cutout arguments for cutout function
     """
-
     logger.setLevel(logging.INFO)
 
     island_id = source.Source_ID
@@ -247,9 +260,9 @@ def get_args(
     outdir.mkdir(parents=True, exist_ok=True)
 
     # Find image size
-    ras: u.Quantity = comps.RA.values * u.deg
-    decs: u.Quantity = comps.Dec.values * u.deg
-    majs: List[float] = comps.Maj.values * u.arcsec
+    ras: u.Quantity = comps.RA.to_numpy() * u.deg
+    decs: u.Quantity = comps.Dec.to_numpy() * u.deg
+    majs: u.Quantity = comps.Maj.to_numpy() * u.arcsec
     coords = SkyCoord(ras, decs, frame="icrs")
     padder = np.max(majs)
 
@@ -340,9 +353,31 @@ def worker(
     beam_num: int,
     stoke: str,
     pad: float = 3,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
-):
+    username: str | None = None,
+    password: str | None = None,
+) -> list[pymongo.UpdateOne]:
+    """Cutout worker.
+
+    Args:
+        host (str): MongoDB host
+        epoch (int): Epoch
+        source (pd.Series): Source dataframe
+        comps (pd.DataFrame): Components dataframe
+        outdir (Path): Output directory
+        image_name (Path): Image name
+        data_in_mem (np.ndarray): Pre-read image data
+        old_header (fits.Header): Old header
+        cube (SpectralCube): Cube
+        field (str): Field name
+        beam_num (int): Beam number
+        stoke (str): Stokes parameter
+        pad (float, optional): PSF padding. Defaults to 3.
+        username (str | None, optional): MongoDB username. Defaults to None.
+        password (str | None, optional): MongoDB password. Defaults to None.
+
+    Returns:
+        list[pymongo.UpdateOne]: List of update queries
+    """
     _, _, comp_col = get_db(
         host=host, epoch=epoch, username=username, password=password
     )
@@ -388,16 +423,42 @@ def big_cutout(
     epoch: int,
     field: str,
     pad: float = 3,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
-    limit: Optional[int] = None,
-) -> List[pymongo.UpdateOne]:
+    username: str | None = None,
+    password: str | None = None,
+    limit: int | None = None,
+) -> list[pymongo.UpdateOne]:
+    """Make cutouts in parallel.
+
+    Args:
+        sources (pd.DataFrame): Source dataframe
+        comps (pd.DataFrame): Components dataframe
+        beam_num (int): Beam number
+        stoke (str): Stokes parameter
+        datadir (Path): Directory with images
+        outdir (Path): Output directory
+        host (str): MongoDB host
+        epoch (int): Epoch
+        field (str): Field name
+        pad (float, optional): PSF padding. Defaults to 3.
+        username (str | None, optional): MongoDB username. Defaults to None.
+        password (str | None, optional): MondoDB password. Defaults to None.
+        limit (int | None, optional): Limit number of sources. Defaults to None.
+
+    Raises:
+        FileNotFoundError: If no images found
+        FileExistsError: If more than one image found
+
+    Returns:
+        list[pymongo.UpdateOne]: List of update queries
+    """
     wild = f"image.restored.{stoke.lower()}*contcube*beam{beam_num:02}.conv.fits"
     images = list(datadir.glob(wild))
     if len(images) == 0:
-        raise Exception(f"No images found matching '{wild}'")
-    elif len(images) > 1:
-        raise Exception(f"More than one image found matching '{wild}'. Files {images=}")
+        msg = f"No images found matching '{wild}'"
+        raise FileNotFoundError(msg)
+    if len(images) > 1:
+        msg = f"More than one image found matching '{wild}'. Files {images=}"
+        raise FileExistsError(msg)
 
     image_name = images[0]
 
@@ -414,7 +475,7 @@ def big_cutout(
         logger.critical(f"Limiting to {limit} islands")
         sources = sources[:limit]
 
-    updates: List[pymongo.UpdateOne] = []
+    updates: list[pymongo.UpdateOne] = []
     with ThreadPoolExecutor() as executor:
         futures = []
         for _, source in sources.iterrows():
@@ -450,13 +511,13 @@ def cutout_islands(
     directory: Path,
     host: str,
     epoch: int,
-    sbid: Optional[int] = None,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    sbid: int | None = None,
+    username: str | None = None,
+    password: str | None = None,
     pad: float = 3,
-    stokeslist: Optional[List[str]] = None,
+    stokeslist: list[str] | None = None,
     dryrun: bool = True,
-    limit: Optional[int] = None,
+    limit: int | None = None,
 ) -> None:
     """Flow to cutout islands in parallel.
 
@@ -464,12 +525,15 @@ def cutout_islands(
         field (str): RACS field name.
         directory (Path): Directory to store cutouts.
         host (str): MongoDB host.
+        epoch (int): RACS epoch.
+        sbid (int, optional): SBID. Defaults to None.
         username (str, optional): Mongo username. Defaults to None.
         password (str, optional): Mongo password. Defaults to None.
         verbose (bool, optional): Verbose output. Defaults to True.
         pad (int, optional): Number of beamwidths to pad cutouts. Defaults to 3.
         stokeslist (List[str], optional): Stokes parameters to cutout. Defaults to None.
         dryrun (bool, optional): Do everything except write FITS files. Defaults to True.
+        limit (int, optional): Limit to this many islands. Defaults to None.
     """
     if stokeslist is None:
         stokeslist = ["I", "Q", "U", "V"]
@@ -502,13 +566,14 @@ def cutout_islands(
             field_col=field_col,
         )
         if not sbid_check:
-            raise ValueError(f"SBID {sbid} does not match field {field}")
+            msg = f"SBID {sbid} does not match field {field}"
+            raise ValueError(msg)
 
     query = {"$and": [{f"beams.{field}": {"$exists": True}}]}
     if sbid is not None:
         query["$and"].append({f"beams.{field}.SBIDs": sbid})
 
-    unique_beams_nums: Set[int] = set(
+    unique_beams_nums: set[int] = set(
         beams_col.distinct(f"beams.{field}.beam_list", query)
     )
     source_ids = sorted(beams_col.distinct("Source_ID", query))
@@ -531,21 +596,21 @@ def cutout_islands(
     )
 
     beam_source_list = []
-    for i, row in tqdm(beams_df.iterrows()):
+    for _i, row in tqdm(beams_df.iterrows()):
         beam_list = row.beams[field]["beam_list"]
         for b in beam_list:
             beam_source_list.append({"Source_ID": row.Source_ID, "beam": b})
     beam_source_df = pd.DataFrame(beam_source_list)
-    beam_source_df.set_index("beam", inplace=True)
+    beam_source_df = beam_source_df.set_index("beam")
 
     comps_df = pd.DataFrame(
         comp_col.find({"Source_ID": {"$in": source_ids}}).sort("Source_ID")
     )
-    comps_df.set_index("Source_ID", inplace=True)
+    comps_df = comps_df.set_index("Source_ID")
 
     # Create output dir if it doesn't exist
     outdir.mkdir(parents=True, exist_ok=True)
-    cuts: List[pymongo.UpdateOne] = []
+    cuts: list[pymongo.UpdateOne] = []
     for stoke in stokeslist:
         for beam_num in unique_beams_nums:
             results = big_cutout.submit(
@@ -576,7 +641,7 @@ def cutout_islands(
 
 
 def main(args: argparse.Namespace) -> None:
-    """Main script
+    """Main script.
 
     Args:
         args (argparse.Namespace): Command-line args
@@ -600,6 +665,14 @@ def main(args: argparse.Namespace) -> None:
 
 
 def cutout_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Cutout parser.
+
+    Args:
+        parent_parser (bool, optional): Parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: Argument parser
+    """
     descStr = f"""
     {logo_str}
 
@@ -608,8 +681,8 @@ def cutout_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
     If Stokes V is present, it will be squished into RMS spectra.
 
     To use with MPI:
-       mpirun -n $NPROCS python -u cutout.py $cubedir $tabledir
-       $outdir --mpi
+        mpirun -n $NPROCS python -u cutout.py $cubedir $tabledir
+        $outdir --mpi
     """
 
     # Parse the command line options
@@ -636,7 +709,7 @@ def cutout_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def cli() -> None:
-    """Command-line interface"""
+    """Command-line interface."""
     gen_parser = generic_parser(parent_parser=True)
     work_parser = workdir_arg_parser(parent_parser=True)
     cut_parser = cutout_parser(parent_parser=True)

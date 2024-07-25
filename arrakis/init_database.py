@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Create the Arrakis database"""
+"""Create the Arrakis database."""
+
+from __future__ import annotations
 
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -27,7 +28,7 @@ TQDM_OUT = TqdmToLogger(logger, level=logging.INFO)
 
 
 def source2beams(ra: float, dec: float, database: Table, max_sep: float = 1) -> Table:
-    """Find RACS beams that contain a given source position
+    """Find RACS beams that contain a given source position.
 
     Args:
         ra (float): RA of source in degrees.
@@ -41,13 +42,13 @@ def source2beams(ra: float, dec: float, database: Table, max_sep: float = 1) -> 
     c1 = SkyCoord(database["RA_DEG"] * u.deg, database["DEC_DEG"] * u.deg, frame="icrs")
     c2 = SkyCoord(ra * u.deg, dec * u.deg, frame="icrs")
     sep = c1.separation(c2)
-    beams = database[sep < max_sep * u.deg]
-    return beams
+    return database[sep < max_sep * u.deg]
 
 
-def ndix_unique(x: np.ndarray) -> Tuple[np.ndarray, List[np.ndarray]]:
-    """Find the N-dimensional array of indices of the unique values in x
-    From https://stackoverflow.com/questions/54734545/indices-of-unique-values-in-array
+def ndix_unique(x: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Find the N-dimensional array of indices of the unique values in x.
+
+    From https://stackoverflow.com/questions/54734545/indices-of-unique-values-in-array.
 
     Args:
         x (np.ndarray): Array of values.
@@ -67,8 +68,8 @@ def ndix_unique(x: np.ndarray) -> Tuple[np.ndarray, List[np.ndarray]]:
 
 def cat2beams(
     mastercat: Table, database: Table, max_sep: float = 1
-) -> Tuple[np.ndarray, np.ndarray, Angle]:
-    """Find the separations between sources in the master catalogue and the RACS beams
+) -> tuple[np.ndarray, np.ndarray, Angle]:
+    """Find the separations between sources in the master catalogue and the RACS beams.
 
     Args:
         mastercat (Table): Master catalogue table.
@@ -89,8 +90,7 @@ def cat2beams(
         m_dec = m_dec * u.deg
     c2 = SkyCoord(m_ra, m_dec, frame="icrs")
 
-    seps = search_around_sky(c1, c2, seplimit=max_sep * u.degree)
-    return seps
+    return search_around_sky(c1, c2, seplimit=max_sep * u.degree)
 
 
 def source_database(
@@ -98,10 +98,10 @@ def source_database(
     compcat: Table,
     host: str,
     epoch: int,
-    username: Union[str, None] = None,
-    password: Union[str, None] = None,
-) -> Tuple[InsertManyResult, InsertManyResult]:
-    """Insert sources into the database
+    username: str | None = None,
+    password: str | None = None,
+) -> tuple[InsertManyResult, InsertManyResult]:
+    """Insert sources into the database.
 
     Following https://medium.com/analytics-vidhya/how-to-upload-a-pandas-dataframe-to-mongodb-ffa18c0953c1
 
@@ -109,6 +109,7 @@ def source_database(
         islandcat (Table): Island catalogue table.
         compcat (Table): Component catalogue table.
         host (str): MongoDB host IP.
+        epoch (int): RACS epoch number.
         username (str, optional): Mongo username. Defaults to None.
         password (str, optional): Mongo host. Defaults to None.
 
@@ -122,7 +123,7 @@ def source_database(
     if isinstance(df_i["Source_ID"][0], bytes):
         logger.info("Decoding strings!")
         str_df = df_i.select_dtypes([object])
-        str_df = str_df.stack().str.decode("utf-8").unstack()
+        str_df = str_df.melt().str.decode("utf-8").pivot_table()
         for col in str_df:
             df_i[col] = str_df[col]
 
@@ -149,7 +150,7 @@ def source_database(
     if isinstance(df_c["Source_ID"][0], bytes):
         logger.info("Decoding strings!")
         str_df = df_c.select_dtypes([object])
-        str_df = str_df.stack().str.decode("utf-8").unstack()
+        str_df = str_df.melt().str.decode("utf-8").pivot_table()
         for col in str_df:
             df_c[col] = str_df[col]
 
@@ -177,12 +178,13 @@ def beam_database(
     islandcat: Table,
     host: str,
     epoch: int,
-    username: Union[str, None] = None,
-    password: Union[str, None] = None,
+    username: str | None = None,
+    password: str | None = None,
 ) -> InsertManyResult:
-    """Insert beams into the database
+    """Insert beams into the database.
 
     Args:
+        database_path (Path): Path to RACS database.
         islandcat (Table): Island catalogue table.
         host (str): MongoDB host IP.
         username (str, optional): Mongo username. Defaults to None.
@@ -219,9 +221,10 @@ def beam_database(
 
 
 def get_catalogue(survey_dir: Path, epoch: int = 0) -> Table:
-    """Get the RACS catalogue for a given epoch
+    """Get the RACS catalogue for a given epoch.
 
     Args:
+        survey_dir (Path): Path to RACS database.
         epoch (int, optional): Epoch number. Defaults to 0.
 
     Returns:
@@ -262,12 +265,13 @@ def get_catalogue(survey_dir: Path, epoch: int = 0) -> Table:
     return racs_fields
 
 
-def get_beams(mastercat: Table, database: Table, epoch: int = 0) -> List[Dict]:
-    """Get beams from the master catalogue
+def get_beams(mastercat: Table, database: Table, epoch: int = 0) -> list[dict]:
+    """Get beams from the master catalogue.
 
     Args:
         mastercat (Table): Master catalogue table.
         database (Table): RACS database table.
+        epoch (int, optional): RACS epoch number. Defaults to 0.
 
     Returns:
         List[Dict]: List of beam dictionaries.
@@ -295,20 +299,25 @@ def get_beams(mastercat: Table, database: Table, epoch: int = 0) -> List[Dict]:
         fields,
     )
 
-    beam_list = []
-    for i, (val, idx) in enumerate(
-        tqdm(zip(vals, ixs), total=len(vals), desc="Getting beams", file=TQDM_OUT)
+    beam_list: list[dict] = []
+    for _i, (val, idx) in enumerate(
+        tqdm(
+            zip(vals, ixs, strict=False),
+            total=len(vals),
+            desc="Getting beams",
+            file=TQDM_OUT,
+        )
     ):
         beam_dict = {}
         name = mastercat[val]["Source_Name"]
         isl_id = mastercat[val]["Source_ID"]
         beams = database[seps[0][idx.astype(int)]]
-        for j, field in enumerate(np.unique(beams["FIELD_NAME"])):
+        for _j, field in enumerate(np.unique(beams["FIELD_NAME"])):
             ndx = beams["FIELD_NAME"] == field
-            field = field.replace("_test4_1.05_", "_") if epoch == 0 else field
+            correct_field = field.replace("_test4_1.05_", "_") if epoch == 0 else field
             beam_dict.update(
                 {
-                    field: {
+                    correct_field: {
                         "beam_list": list(beams["BEAM_NUM"][ndx]),
                         "SBIDs": list(np.unique(beams["SBID"][ndx])),
                         "DR1": bool(np.unique(in_dr1[seps[0][idx.astype(int)]][ndx])),
@@ -333,11 +342,11 @@ def beam_inf(
     survey_dir: Path,
     host: str,
     epoch: int,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    username: str | None = None,
+    password: str | None = None,
 ) -> InsertManyResult:
-    """Get the beam information"""
-    tabs: List[Table] = []
+    """Get the beam information."""
+    tabs: list[Table] = []
     for row in tqdm(database, desc="Reading beam info", file=TQDM_OUT):
         try:
             tab = read_racs_database(
@@ -379,7 +388,7 @@ def read_racs_database(
     epoch: int,
     table: str,
 ) -> Table:
-    """Read the RACS database from CSVs or postgresql
+    """Read the RACS database from CSVs or postgresql.
 
     Args:
         survey_dir (Path): Path to RACS database (i.e. 'askap_surveys/racs' repo).
@@ -403,7 +412,8 @@ def read_racs_database(
     basedir = survey_dir / "db" / epoch_name
     data_file = basedir / f"{table}.csv"
     if not data_file.exists():
-        raise FileNotFoundError(f"{data_file} not found!")
+        msg = f"{data_file} not found!"
+        raise FileNotFoundError(msg)
 
     return Table.read(data_file)
 
@@ -412,10 +422,10 @@ def field_database(
     survey_dir: Path,
     host: str,
     epoch: int,
-    username: Optional[str] = None,
-    password: Optional[str] = None,
-) -> Tuple[InsertManyResult, InsertManyResult]:
-    """Reset and load the field database
+    username: str | None = None,
+    password: str | None = None,
+) -> tuple[InsertManyResult, InsertManyResult]:
+    """Reset and load the field database.
 
     Args:
         survey_dir (Path): Path to RACS database (i.e. 'askap_surveys/racs' repo).
@@ -432,8 +442,8 @@ def field_database(
         database["COMMENT"] = database["COMMENT"].astype(str)
     # Remove rows with SBID < 0
     database = database[database["SBID"] >= 0]
-    df = database.to_pandas()
-    field_list_dict = df.to_dict("records")
+    database_df = database.to_pandas()
+    field_list_dict = database_df.to_dict("records")
     logger.info("Loading fields into mongo...")
     field_col = get_field_db(
         host=host, epoch=epoch, username=username, password=password
@@ -462,22 +472,23 @@ def field_database(
 
 def main(
     load: bool = False,
-    islandcat: Optional[str] = None,
-    compcat: Optional[str] = None,
-    database_path: Optional[Path] = None,
+    islandcat: str | None = None,
+    compcat: str | None = None,
+    database_path: Path | None = None,
     host: str = "localhost",
-    username: Optional[str] = None,
-    password: Optional[str] = None,
+    username: str | None = None,
+    password: str | None = None,
     field: bool = False,
-    epochs: List[int] = 0,
+    epochs: list[int] = 0,
     force: bool = False,
 ) -> None:
-    """Main script
+    """Main script.
 
     Args:
         load (bool, optional): Load the database. Defaults to False.
         islandcat (Union[str, None], optional): Island catalogue. Defaults to None.
         compcat (Union[str, None], optional): Component catalogue. Defaults to None.
+        database_path (Union[Path, None], optional): Path to RACS database. Defaults to None.
         host (str, optional): Mongo host. Defaults to "localhost".
         username (Union[str, None], optional): Mongo username. Defaults to None.
         password (Union[str, None], optional): Mongo password. Defaults to None.
@@ -570,7 +581,7 @@ def main(
 
 
 def cli():
-    """Command-line interface"""
+    """Command-line interface."""
     import argparse
 
     # Help string to be shown using the -h option

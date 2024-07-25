@@ -1,5 +1,4 @@
-"""
-The interpolation works as follows:
+"""The interpolation works as follows:
 Take pixels offsets x,y from reference pixel in input image, multiply by
 axis increments to get offx and offy.
 
@@ -13,6 +12,8 @@ x = sin(offset)*cos(angle)/incx + refx
 y = sin(offset)*sin(angle)/incy + refy
 """
 
+from __future__ import annotations
+
 import os
 import warnings
 from glob import glob
@@ -22,17 +23,16 @@ import astropy.units as u
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from astropy.coordinates import SkyCoord
-from astropy.io import fits
-from astropy.stats import mad_std, sigma_clip
-from astropy.wcs import WCS
-from dask import delayed
-
 from arrakis.linmos import gen_seps
 from arrakis.logger import logger, logging
 from arrakis.utils.database import get_db
 from arrakis.utils.fitsutils import getfreq
 from arrakis.utils.pipeline import chunk_dask, logo_str
+from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy.stats import mad_std, sigma_clip
+from astropy.wcs import WCS
+from dask import delayed
 
 
 def make_plot(data, comp, imfile):
@@ -160,7 +160,7 @@ def main(
     island_ids = sorted(beams_col.distinct("Source_ID", beam_query))
     isl_query = {"Source_ID": {"$in": island_ids}}
     beams = pd.DataFrame(list(beams_col.find(isl_query).sort("Source_ID")))
-    beams.set_index("Source_ID", drop=False, inplace=True)
+    beams = beams.set_index("Source_ID", drop=False)
     components = pd.DataFrame(
         list(
             comp_col.find(
@@ -177,12 +177,12 @@ def main(
             ).sort("Source_ID")
         )
     )
-    components.set_index("Source_ID", drop=False, inplace=True)
+    components = components.set_index("Source_ID", drop=False)
     _ = list(components["Gaussian_ID"])
     assert len(set(beams.index)) == len(set(components.index))
 
     outputs = []
-    for i, c in components.iterrows():
+    for _i, c in components.iterrows():
         if snr_cut is not None:
             noise = c.Noise
             signal = c.Total_flux_Gaussian

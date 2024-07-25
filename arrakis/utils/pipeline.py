@@ -1,5 +1,6 @@
-#!/usr/bin/env python
-"""Pipeline and flow utility functions"""
+"""Pipeline and flow utility functions."""
+
+from __future__ import annotations
 
 import argparse
 import base64
@@ -9,14 +10,13 @@ import subprocess
 import time
 import warnings
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
 from uuid import UUID
 
 import astropy.units as u
 import dask.array as da
-import dask.distributed as distributed
 import numpy as np
 from astropy.utils.exceptions import AstropyWarning
+from dask import distributed
 from dask.delayed import Delayed
 from dask.distributed import get_client
 from distributed.client import futures_of
@@ -24,7 +24,6 @@ from distributed.diagnostics.progressbar import ProgressBar
 from distributed.utils import LoopRunner
 from prefect import task
 from prefect.artifacts import create_markdown_artifact
-from prefect_dask import get_dask_client
 from spectral_cube.utils import SpectralCubeWarning
 from tornado.ioloop import IOLoop
 from tqdm.auto import tqdm, trange
@@ -57,10 +56,11 @@ logo_str = """
 # Stolen from Flint
 @task(name="Upload image as artifact")
 def upload_image_as_artifact_task(
-    image_path: Path, description: Optional[str] = None
+    image_path: Path, description: str | None = None
 ) -> UUID:
-    """Create and submit a markdown artifact tracked by prefect for an
-    input image. Currently supporting png formatted images.
+    """Create and submit a markdown artifact tracked by prefect for an input image.
+
+    Currently supporting png formatted images.
 
     The input image is converted to a base64 encoding, and embedded directly
     within the markdown string. Therefore, be mindful of the image size as this
@@ -79,7 +79,7 @@ def upload_image_as_artifact_task(
         image_type in SUPPORTED_IMAGE_TYPES
     ), f"{image_path} has type {image_type}, and is not supported. Supported types are {SUPPORTED_IMAGE_TYPES}"
 
-    with open(image_path, "rb") as open_image:
+    with image_path.open("rb") as open_image:
         logger.info(f"Encoding {image_path} in base64")
         image_base64 = base64.b64encode(open_image.read()).decode()
 
@@ -95,6 +95,14 @@ def upload_image_as_artifact_task(
 
 
 def workdir_arg_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create a workdir parser.
+
+    Args:
+        parent_parser (bool, optional): If a parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The parser.
+    """
     # Parse the command line options
     work_parser = argparse.ArgumentParser(
         add_help=not parent_parser,
@@ -111,6 +119,14 @@ def workdir_arg_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 
 def generic_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    """Create a generic parser.
+
+    Args:
+        parent_parser (bool, optional): If a parent parser. Defaults to False.
+
+    Returns:
+        argparse.ArgumentParser: The parser.
+    """
     descStr = f"""
     {logo_str}
     Generic pipeline options
@@ -184,85 +200,10 @@ def generic_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
     return gen_parser
 
 
-class performance_report_prefect:
-    """Gather performance report from prefect_dask
-
-    Basically stolen from:
-        https://distributed.dask.org/en/latest/_modules/distributed/client.html#performance_report
-
-    This creates a static HTML file that includes many of the same plots of the
-    dashboard for later viewing.
-
-    The resulting file uses JavaScript, and so must be viewed with a web
-    browser.  Locally we recommend using ``python -m http.server`` or hosting
-    the file live online.
-
-    Parameters
-    ----------
-    filename: str, optional
-        The filename to save the performance report locally
-
-    stacklevel: int, optional
-        The code execution frame utilized for populating the Calling Code section
-        of the report. Defaults to `1` which is the frame calling ``performance_report_prefect``
-
-    mode: str, optional
-        Mode parameter to pass to :func:`bokeh.io.output.output_file`. Defaults to ``None``.
-
-    storage_options: dict, optional
-         Any additional arguments to :func:`fsspec.open` when writing to a URL.
-
-    Examples
-    --------
-    >>> with performance_report_prefect(filename="myfile.html", stacklevel=1):
-    ...     x.compute()
-    """
-
-    def __init__(
-        self, filename="dask-report.html", stacklevel=1, mode=None, storage_options=None
-    ):
-        self.filename = filename
-        # stacklevel 0 or less - shows dask internals which likely isn't helpful
-        self._stacklevel = stacklevel if stacklevel > 0 else 1
-        self.mode = mode
-        self.storage_options = storage_options or {}
-
-    async def __aenter__(self):
-        self.start = time.time()
-        with get_dask_client() as client:
-            self.last_count = client.run_on_scheduler(
-                lambda dask_scheduler: dask_scheduler.monitor.count
-            )
-            client.get_task_stream(start=0, stop=0)  # ensure plugin
-
-    async def __aexit__(self, exc_type, exc_value, traceback, code=None):
-        import fsspec
-
-        with get_dask_client() as client:
-            if code is None:
-                code = client._get_computation_code(self._stacklevel + 1)
-            data = await client.scheduler.performance_report(
-                start=self.start, last_count=self.last_count, code=code, mode=self.mode
-            )
-            with fsspec.open(
-                self.filename, mode="w", compression="infer", **self.storage_options
-            ) as f:
-                f.write(data)
-
-    def __enter__(self):
-        with get_dask_client() as client:
-            client.sync(self.__aenter__)
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        with get_dask_client() as client:
-            code = client._get_computation_code(self._stacklevel + 1)
-            client.sync(self.__aexit__, exc_type, exc_value, traceback, code=code)
-
-
 def inspect_client(
-    client: Union[distributed.Client, None] = None,
-) -> Tuple[str, int, int, u.Quantity, int, u.Quantity]:
-    """_summary_
+    client: distributed.Client | None = None,
+) -> tuple[str, int, int, u.Quantity, int, u.Quantity]:
+    """_summary_.
 
     Args:
         client (Union[distributed.Client,None]): Dask client to inspect.
@@ -294,6 +235,18 @@ def chunk_dask(
     progress_text="",
     verbose=True,
 ) -> list:
+    """Run a task in chunks.
+
+    Args:
+        outputs (list): List of outputs to chunk
+        batch_size (int, optional): Chunk size. Defaults to 10_000.
+        task_name (str, optional): Name of task. Defaults to "".
+        progress_text (str, optional): Description of task. Defaults to "".
+        verbose (bool, optional): Verbose output. Defaults to True.
+
+    Returns:
+        list: Completed futures
+    """
     client = get_client()
     chunk_outputs = []
     for i in trange(
@@ -311,10 +264,8 @@ def chunk_dask(
     return chunk_outputs
 
 
-def delayed_to_da(
-    list_of_delayed: List[Delayed], chunk: Union[int, None] = None
-) -> da.Array:
-    """Convert list of delayed arrays to a dask array
+def delayed_to_da(list_of_delayed: list[Delayed], chunk: int | None = None) -> da.Array:
+    """Convert list of delayed arrays to a dask array.
 
     Args:
         list_of_delayed (List[delayed]): List of delayed objects
@@ -324,23 +275,18 @@ def delayed_to_da(
         da.Array: Dask array
     """
     sample = list_of_delayed[0].compute()
-    dim = (len(list_of_delayed),) + sample.shape
-    if chunk is None:
-        c_dim = dim
-    else:
-        c_dim = (chunk,) + sample.shape
+    dim = (len(list_of_delayed), *sample.shape)
+    c_dim = dim if chunk is None else (chunk, *sample.shape)
     darray_list = [
         da.from_delayed(lazy, dtype=sample.dtype, shape=sample.shape)
         for lazy in list_of_delayed
     ]
-    darray = da.stack(darray_list, axis=0).reshape(dim).rechunk(c_dim)
-
-    return darray
+    return da.stack(darray_list, axis=0).reshape(dim).rechunk(c_dim)
 
 
 # stolen from https://github.com/tqdm/tqdm/issues/278
 class TqdmProgressBar(ProgressBar):
-    """Tqdm for Dask"""
+    """Tqdm for Dask."""
 
     def __init__(
         self,
@@ -352,7 +298,20 @@ class TqdmProgressBar(ProgressBar):
         start=True,
         **tqdm_kwargs,
     ):
-        super(TqdmProgressBar, self).__init__(keys, scheduler, interval, complete)
+        """Make a Tqdm progress bar.
+
+        Args:
+            keys (Any): Iterable of keys to track
+            scheduler (Any | None, optional): scheduler. Defaults to None.
+            interval (str, optional): update interval. Defaults to "100ms".
+            loop (Any | None, optional): Loop. Defaults to None.
+            complete (bool, optional): Complete. Defaults to True.
+            start (bool, optional): Start. Defaults to True.
+
+        kwargs:
+            **tqdm_kwargs: Tqdm keyword arguments
+        """
+        super().__init__(keys, scheduler, interval, complete)
         self.tqdm = tqdm(keys, **tqdm_kwargs)
         self.loop = loop or IOLoop()
 
@@ -361,23 +320,25 @@ class TqdmProgressBar(ProgressBar):
             loop_runner.run_sync(self.listen)
 
     def _draw_bar(self, remaining, all, **kwargs):
+        _ = kwargs
         update_ct = (all - remaining) - self.tqdm.n
         self.tqdm.update(update_ct)
 
     def _draw_stop(self, **kwargs):
+        _ = kwargs
         self.tqdm.close()
 
 
 def tqdm_dask(futures_in: distributed.Future, **kwargs) -> None:
-    """Tqdm for Dask futures"""
+    """Tqdm for Dask futures."""
     futures = futures_of(futures_in)
-    if not isinstance(futures, (set, list)):
+    if not isinstance(futures, set | list):
         futures = [futures]
     TqdmProgressBar(futures, **kwargs)
 
 
 def port_forward(port: int, target: str) -> None:
-    """Forward ports to local host
+    """Forward ports to local host.
 
     Args:
         port (int): port to forward

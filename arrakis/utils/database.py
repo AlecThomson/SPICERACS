@@ -1,8 +1,8 @@
-#!/usr/bin/env python
-"""Database utilities"""
+"""Database utilities."""
+
+from __future__ import annotations
 
 import warnings
-from typing import Optional, Tuple, Union
 
 import pymongo
 from astropy.utils.exceptions import AstropyWarning
@@ -16,7 +16,7 @@ warnings.simplefilter("ignore", category=AstropyWarning)
 
 
 def validate_sbid_field_pair(field_name: str, sbid: int, field_col: Collection) -> bool:
-    """Validate field and sbid pair
+    """Validate field and sbid pair.
 
     Args:
         field_name (str): Field name.
@@ -27,17 +27,18 @@ def validate_sbid_field_pair(field_name: str, sbid: int, field_col: Collection) 
         bool: If field name and sbid pair is valid.
     """
     logger.info(f"Validating field name and SBID pair: {field_name}, {sbid}")
-    field_data: Optional[dict] = field_col.find_one({"SBID": sbid})
+    field_data: dict | None = field_col.find_one({"SBID": sbid})
     if field_data is None:
-        raise ValueError(f"SBID {sbid} not found in database")
+        msg = f"SBID {sbid} not found in database"
+        raise ValueError(msg)
 
     return field_data["FIELD_NAME"] == field_name
 
 
 def test_db(
-    host: str, username: Union[str, None] = None, password: Union[str, None] = None
+    host: str, username: str | None = None, password: str | None = None
 ) -> bool:
-    """Test connection to MongoDB
+    """Test connection to MongoDB.
 
     Args:
         host (str): Mongo host IP.
@@ -63,8 +64,9 @@ def test_db(
     ) as dbclient:  # type: pymongo.MongoClient
         try:
             dbclient.list_database_names()
-        except pymongo.errors.ServerSelectionTimeoutError:
-            raise Exception("Please ensure 'mongod' is running")
+        except pymongo.errors.ServerSelectionTimeoutError as err:
+            msg = "Please ensure 'mongod' is running"
+            raise Exception(msg) from err
 
         logger.info("MongoDB connection succesful!")
 
@@ -74,13 +76,14 @@ def test_db(
 def get_db(
     host: str,
     epoch: int,
-    username: Union[str, None] = None,
-    password: Union[str, None] = None,
-) -> Tuple[Collection, Collection, Collection]:
-    """Get MongoDBs
+    username: str | None = None,
+    password: str | None = None,
+) -> tuple[Collection, Collection, Collection]:
+    """Get MongoDBs.
 
     Args:
         host (str): Mongo host IP.
+        epoch (int): Epoch number.
         username (str, optional): Username. Defaults to None.
         password (str, optional): Password. Defaults to None.
 
@@ -102,10 +105,11 @@ def get_db(
 
 
 def get_field_db(host: str, epoch: int, username=None, password=None) -> Collection:
-    """Get MongoDBs
+    """Get MongoDBs.
 
     Args:
         host (str): Mongo host IP.
+        epoch (int): Epoch.
         username (str, optional): Username. Defaults to None.
         password (str, optional): Password. Defaults to None.
 
@@ -120,15 +124,15 @@ def get_field_db(host: str, epoch: int, username=None, password=None) -> Collect
         authMechanism="SCRAM-SHA-256",
     )  # type: pymongo.MongoClient
     mydb = dbclient[f"arrakis_epoch_{epoch}"]  # Create/open database
-    field_col = mydb["fields"]  # Create/open collection
-    return field_col
+    return mydb["fields"]  # Create/open collection
 
 
 def get_beam_inf_db(host: str, epoch: int, username=None, password=None) -> Collection:
-    """Get MongoDBs
+    """Get MongoDBs.
 
     Args:
         host (str): Mongo host IP.
+        epoch (int): Epoch number.
         username (str, optional): Username. Defaults to None.
         password (str, optional): Password. Defaults to None.
 
@@ -143,5 +147,4 @@ def get_beam_inf_db(host: str, epoch: int, username=None, password=None) -> Coll
         authMechanism="SCRAM-SHA-256",
     )  # type: pymongo.MongoClient
     mydb = dbclient[f"arrakis_epoch_{epoch}"]  # Create/open database
-    beam_inf_col = mydb["beam_inf"]  # Create/open collection
-    return beam_inf_col
+    return mydb["beam_inf"]  # Create/open collection
